@@ -23,4 +23,4 @@ cargo test
 
 ## License
 
-MIT, as declared in `Cargo.toml`, inherited from the AetherKiri project.
+GPL-3.0-or-later, consistent with the AetherKiri project it was extracted from.
