@@ -10,8 +10,36 @@ use crate::vm::{
     CharRequest, EffectRequest, PanelRequest, ShakeRequest, StageRequest, TransitionConfig,
 };
 
-const WIDTH: u32 = 1280;
-const HEIGHT: u32 = 720;
+/// Drawing surface size for one game.
+///
+/// Minori titles do not share a resolution: Supipara and Trinoline run at
+/// 1280x720, while ef - the first tale is an 800x600 game and every coordinate
+/// its scripts carry is in that 800x600 pixel space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Canvas {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Canvas {
+    pub const fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+
+    pub const fn pixels(self) -> usize {
+        self.width as usize * self.height as usize
+    }
+
+    pub const fn bytes(self) -> usize {
+        self.pixels() * 4
+    }
+}
+
+impl Default for Canvas {
+    fn default() -> Self {
+        Self::new(1280, 720)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MainMenuAction {
@@ -244,6 +272,7 @@ struct SaveMenuState {
 #[derive(Debug)]
 pub struct SceneSystem {
     profile: &'static GameProfile,
+    canvas: Canvas,
     pub current: SceneKind,
     frame: Frame,
     background_source: Frame,
@@ -266,15 +295,15 @@ pub struct SceneSystem {
 }
 
 
-fn black_rgba() -> Vec<u8> {
-    [0, 0, 0, 255].repeat((WIDTH * HEIGHT) as usize)
+fn black_rgba(canvas: Canvas) -> Vec<u8> {
+    [0, 0, 0, 255].repeat((canvas.width * canvas.height) as usize)
 }
 
-fn black_frame() -> Frame {
+fn black_frame(canvas: Canvas) -> Frame {
     Frame {
-        width: WIDTH,
-        height: HEIGHT,
-        rgba: black_rgba(),
+        width: canvas.width,
+        height: canvas.height,
+        rgba: black_rgba(canvas, ),
         serial: 0,
     }
 }
@@ -283,9 +312,11 @@ impl SceneSystem {
     /// A script scene with no artwork yet, for games whose title screen lives
     /// outside the runtime. The first .stage call replaces it.
     pub fn script_only(profile: &'static GameProfile) -> Self {
-        let frame = black_frame();
+        let canvas = profile.canvas();
+        let frame = black_frame(canvas);
         Self {
             profile,
+            canvas,
             current: SceneKind::Script,
             background_source: frame.clone(),
             background_rgba: frame.rgba.clone(),
@@ -318,6 +349,7 @@ impl SceneSystem {
         let frame = decode_png(&data)?;
         Ok(Self {
             profile,
+            canvas: profile.canvas(),
             current: SceneKind::MainMenu,
             background_source: frame.clone(),
             background_rgba: frame.rgba.clone(),
@@ -342,11 +374,11 @@ impl SceneSystem {
 
     pub fn enter_script_scene(&mut self) {
         let serial = self.frame.serial.saturating_add(1);
-        let black = black_rgba();
+        let black = black_rgba(self.canvas, );
         self.current = SceneKind::Script;
         self.frame = Frame {
-            width: WIDTH,
-            height: HEIGHT,
+            width: self.canvas.width,
+            height: self.canvas.height,
             rgba: black.clone(),
             serial,
         };
@@ -416,8 +448,8 @@ impl SceneSystem {
             .as_ref()
             .map_or_else(|| self.frame.rgba.clone(), |state| state.underlay.clone());
         Frame {
-            width: WIDTH,
-            height: HEIGHT,
+            width: self.canvas.width,
+            height: self.canvas.height,
             rgba,
             serial: self.frame.serial,
         }
@@ -471,8 +503,8 @@ impl SceneSystem {
         }
         if self.game_menu.is_none() {
             let trigger = self.profile.ui.game_menu.trigger_size;
-            if (f64::from(WIDTH) - trigger..f64::from(WIDTH)).contains(&x)
-                && (f64::from(HEIGHT) - trigger..f64::from(HEIGHT)).contains(&y)
+            if (f64::from(self.canvas.width) - trigger..f64::from(self.canvas.width)).contains(&x)
+                && (f64::from(self.canvas.height) - trigger..f64::from(self.canvas.height)).contains(&y)
             {
                 self.open_game_menu(vfs)?;
                 return Ok(Some(GameMenuAction::Consumed));
@@ -508,9 +540,9 @@ impl SceneSystem {
     }
 
     pub fn restore_save_capture(&mut self, frame: Frame) -> Result<(), String> {
-        if frame.width != WIDTH
-            || frame.height != HEIGHT
-            || frame.rgba.len() != (WIDTH * HEIGHT * 4) as usize
+        if frame.width != self.canvas.width
+            || frame.height != self.canvas.height
+            || frame.rgba.len() != (self.canvas.width * self.canvas.height * 4) as usize
         {
             return Err("manual save scene frame has invalid dimensions".into());
         }
@@ -542,14 +574,14 @@ impl SceneSystem {
         frame: Frame,
         state: ManualSceneState,
     ) -> Result<(), String> {
-        if state.background_rgba.len() != (WIDTH * HEIGHT * 4) as usize {
+        if state.background_rgba.len() != (self.canvas.width * self.canvas.height * 4) as usize {
             return Err("manual save background has invalid dimensions".into());
         }
         self.restore_save_capture(frame)?;
         self.background_rgba = state.background_rgba;
         self.background_source = Frame {
-            width: WIDTH,
-            height: HEIGHT,
+            width: self.canvas.width,
+            height: self.canvas.height,
             rgba: self.background_rgba.clone(),
             serial: self.frame.serial,
         };
@@ -659,8 +691,8 @@ impl SceneSystem {
         let underlay = self.frame.rgba.clone();
         let menu = &self.profile.ui.game_menu;
         let back = decode_png(&vfs.read(menu.background)?)?;
-        let left = WIDTH as i32 - back.width as i32 - menu.right_margin;
-        let top = HEIGHT as i32 - back.height as i32 - menu.bottom_margin;
+        let left = self.canvas.width as i32 - back.width as i32 - menu.right_margin;
+        let top = self.canvas.height as i32 - back.height as i32 - menu.bottom_margin;
         composite_source_over(&mut self.frame, &back, left, top);
         for item in menu.items {
             let image = decode_png(&vfs.read(item.resource)?)?;
@@ -698,7 +730,7 @@ impl SceneSystem {
                     let normal = decode_png(&vfs.read(&format!("{base}_n.png"))?)?;
                     let scrolling = decode_png(&vfs.read(&format!("{base}_f.png"))?)?;
                     self.background_source = normal.clone();
-                    self.background_rgba = crop_background(&normal, 0, 0)?.rgba;
+                    self.background_rgba = crop_background(self.canvas, &normal, 0, 0)?.rgba;
                     self.camera_x = 0;
                     self.camera_y = 0;
                     self.effect_layers = Some(StageEffectLayers {
@@ -731,7 +763,7 @@ impl SceneSystem {
         let x = if from_left {
             -(image.width as i32)
         } else {
-            WIDTH as i32
+            self.canvas.width as i32
         };
         self.wscroll = None;
         self.cutin = Some(CutinState {
@@ -760,7 +792,7 @@ impl SceneSystem {
         self.wscroll = None;
         self.cutin = None;
         self.background_rgba =
-            crop_background(&self.background_source, self.camera_x, self.camera_y)?.rgba;
+            crop_background(self.canvas, &self.background_source, self.camera_x, self.camera_y)?.rgba;
         self.render_panel_frame();
         Ok(())
     }
@@ -795,7 +827,7 @@ impl SceneSystem {
         advance_cutin(cutin, steps);
         let complete = cutin.state == 3;
         let x = cutin.x;
-        let y = (HEIGHT as i32 - cutin.image.height as i32) / 2;
+        let y = (self.canvas.height as i32 - cutin.image.height as i32) / 2;
         let image = cutin.image.clone();
         self.render_panel_frame();
         if complete {
@@ -816,7 +848,7 @@ impl SceneSystem {
             .effect_layers
             .as_ref()
             .ok_or_else(|| "WScroll2 stage layers are unavailable".to_string())?;
-        let mut output = crop_background(&layers.base, self.camera_x, self.camera_y)?;
+        let mut output = crop_background(self.canvas, &layers.base, self.camera_x, self.camera_y)?;
         for (layer, x, y) in &layers.scrolling {
             composite_wrapped_horizontal(
                 &mut output,
@@ -886,7 +918,7 @@ impl SceneSystem {
             }
             let amplitude = shake.amplitude.unsigned_abs() as i32;
             self.frame.rgba = match shake.mode {
-                b'V' => translate_frame(
+                b'V' => translate_frame(self.canvas, 
                     &shake.base_rgba,
                     0,
                     if shake.phase & 1 == 0 {
@@ -895,7 +927,7 @@ impl SceneSystem {
                         amplitude
                     },
                 ),
-                b'H' => translate_frame(
+                b'H' => translate_frame(self.canvas, 
                     &shake.base_rgba,
                     if shake.phase & 1 == 0 {
                         -amplitude
@@ -916,9 +948,9 @@ impl SceneSystem {
                         6 => (amplitude, -amplitude),
                         _ => (0, -amplitude),
                     };
-                    translate_frame(&shake.base_rgba, x, y)
+                    translate_frame(self.canvas, &shake.base_rgba, x, y)
                 }
-                b'Z' => zoom_inset_frame(&shake.base_rgba, amplitude),
+                b'Z' => zoom_inset_frame(self.canvas, &shake.base_rgba, amplitude),
                 b'O' => {
                     let random = msvc_rand(&mut self.rand_state);
                     let angle = if amplitude == 0 {
@@ -926,17 +958,17 @@ impl SceneSystem {
                     } else {
                         f64::from(random % (2 * amplitude) - amplitude).to_radians()
                     };
-                    rotate_frame(
+                    rotate_frame(self.canvas, 
                         &shake.base_rgba,
-                        WIDTH as f64 / 2.0,
-                        HEIGHT as f64 / 2.0,
+                        self.canvas.width as f64 / 2.0,
+                        self.canvas.height as f64 / 2.0,
                         angle,
                     )
                 }
                 b'T' => {
                     let angle_degrees = f64::from(shake.phase.saturating_add(1)) * 1000.0 / 800.0;
                     if angle_degrees <= f64::from(amplitude) {
-                        rotate_frame(
+                        rotate_frame(self.canvas, 
                             &shake.base_rgba,
                             799.0,
                             0.0,
@@ -954,7 +986,7 @@ impl SceneSystem {
                     let y = [
                         0, -amplitude, -amplitude, -amplitude, 0, 0, 0, amplitude, amplitude,
                     ][index];
-                    translate_frame(&shake.base_rgba, x, y)
+                    translate_frame(self.canvas, &shake.base_rgba, x, y)
                 }
                 _ => unreachable!(),
             };
@@ -1039,7 +1071,7 @@ impl SceneSystem {
         }
         if changed {
             self.background_rgba =
-                crop_background(&self.background_source, self.camera_x, self.camera_y)?.rgba;
+                crop_background(self.canvas, &self.background_source, self.camera_x, self.camera_y)?.rgba;
             self.render_panel_frame();
         }
         Ok(complete)
@@ -1277,16 +1309,16 @@ impl SceneSystem {
     }
 
     fn freeze_characters(&mut self) {
-        let composed = freeze_character_layers(&self.background_rgba, &mut self.characters);
+        let composed = freeze_character_layers(self.canvas, &self.background_rgba, &mut self.characters);
         if let Some(transition) = self.transition.as_mut() {
             transition.new_rgba = composed;
             return;
         }
         self.frame.rgba = composed;
         if let Some(transition) = self.panel_transition.as_ref() {
-            render_panel_transition(&mut self.frame.rgba, transition);
+            render_panel_transition(self.canvas, &mut self.frame.rgba, transition);
         } else if let Some(panel) = &self.panel {
-            composite_panel(&mut self.frame.rgba, panel, 255);
+            composite_panel(self.canvas, &mut self.frame.rgba, panel, 255);
         }
         self.frame.serial = self.frame.serial.saturating_add(1);
     }
@@ -1404,8 +1436,9 @@ impl SceneSystem {
     }
 
     fn refresh_character_frame(&mut self) {
-        let mut composed = compose_characters(&self.background_rgba, &self.characters);
+        let mut composed = compose_characters(self.canvas, &self.background_rgba, &self.characters);
         composite_panel_state(
+            self.canvas,
             &mut composed,
             self.panel_transition.as_ref(),
             self.panel.as_ref(),
@@ -1448,7 +1481,7 @@ impl SceneSystem {
                 foreground.push((overlay, request.base_x, request.base_y));
             }
         }
-        let target = crop_background(&image, request.x, request.y)?;
+        let target = crop_background(self.canvas, &image, request.x, request.y)?;
         self.effect_layers = Some(StageEffectLayers {
             base,
             scrolling,
@@ -1462,8 +1495,9 @@ impl SceneSystem {
         self.scroll = None;
         self.shake = None;
         self.background_rgba = target.rgba;
-        let mut target_rgba = compose_characters(&self.background_rgba, &self.characters);
+        let mut target_rgba = compose_characters(self.canvas, &self.background_rgba, &self.characters);
         composite_panel_state(
+            self.canvas,
             &mut target_rgba,
             self.panel_transition.as_ref(),
             self.panel.as_ref(),
@@ -1477,12 +1511,12 @@ impl SceneSystem {
             {
                 let duration = u32::try_from(config.duration.max(0)).unwrap_or(u32::MAX);
                 let mask = if matches!(config.transition_type, 1 | 18) && config.mask.len() > 1 {
-                    Some(decode_transition_mask(&vfs.read(&config.mask)?)?)
+                    Some(decode_transition_mask(self.canvas, &vfs.read(&config.mask)?)?)
                 } else {
                     None
                 };
                 let tile_values = (3..=13).contains(&config.transition_type).then(|| {
-                    transition_tile_values(config.transition_type - 3, &mut self.rand_state)
+                    transition_tile_values(self.canvas, config.transition_type - 3, &mut self.rand_state)
                 });
                 self.transition = Some(TransitionState {
                     transition_type: config.transition_type,
@@ -1526,7 +1560,7 @@ impl SceneSystem {
                 .as_ref()
                 .is_none_or(|values| values.iter().all(|&value| value >= 10 * 576)),
             18 => transition.mask.is_none() || transition.progress > 255,
-            _ => progress > transition_completion(transition.transition_type),
+            _ => progress > transition_completion(self.canvas, transition.transition_type),
         };
         if complete {
             let new_rgba = std::mem::take(&mut transition.new_rgba);
@@ -1537,15 +1571,16 @@ impl SceneSystem {
         if progress != transition.progress {
             let previous_progress = transition.progress;
             transition.progress = progress;
-            render_transition(transition, previous_progress, &mut self.frame.rgba);
+            render_transition(self.canvas, transition, previous_progress, &mut self.frame.rgba);
             self.frame.serial = self.frame.serial.saturating_add(1);
         }
         false
     }
 
     fn render_panel_frame(&mut self) {
-        self.frame.rgba = compose_characters(&self.background_rgba, &self.characters);
+        self.frame.rgba = compose_characters(self.canvas, &self.background_rgba, &self.characters);
         composite_panel_state(
+            self.canvas,
             &mut self.frame.rgba,
             self.panel_transition.as_ref(),
             self.panel.as_ref(),
@@ -1568,32 +1603,34 @@ impl SceneSystem {
 
     fn install_frame(&mut self, rgba: Vec<u8>) {
         self.frame = Frame {
-            width: WIDTH,
-            height: HEIGHT,
+            width: self.canvas.width,
+            height: self.canvas.height,
             rgba,
             serial: self.frame.serial.saturating_add(1),
         };
     }
 }
 
-fn rotate_frame(source: &[u8], center_x: f64, center_y: f64, angle: f64) -> Vec<u8> {
+fn rotate_frame(
+    canvas: Canvas,
+    source: &[u8], center_x: f64, center_y: f64, angle: f64) -> Vec<u8> {
     let mut output = vec![0; source.len()];
     for pixel in output.chunks_exact_mut(4) {
         pixel[3] = 255;
     }
     let cosine = angle.cos();
     let sine = angle.sin();
-    for target_y in 0..HEIGHT {
-        for target_x in 0..WIDTH {
+    for target_y in 0..canvas.height {
+        for target_x in 0..canvas.width {
             let x = f64::from(target_x) - center_x;
             let y = f64::from(target_y) - center_y;
             let source_x = (cosine * x + sine * y + center_x) as i32;
             let source_y = (-sine * x + cosine * y + center_y) as i32;
-            if !(0..WIDTH as i32).contains(&source_x) || !(0..HEIGHT as i32).contains(&source_y) {
+            if !(0..canvas.width as i32).contains(&source_x) || !(0..canvas.height as i32).contains(&source_y) {
                 continue;
             }
-            let source_index = ((source_y as u32 * WIDTH + source_x as u32) * 4) as usize;
-            let target_index = ((target_y * WIDTH + target_x) * 4) as usize;
+            let source_index = ((source_y as u32 * canvas.width + source_x as u32) * 4) as usize;
+            let target_index = ((target_y * canvas.width + target_x) * 4) as usize;
             output[target_index..target_index + 4]
                 .copy_from_slice(&source[source_index..source_index + 4]);
         }
@@ -1601,23 +1638,25 @@ fn rotate_frame(source: &[u8], center_x: f64, center_y: f64, angle: f64) -> Vec<
     output
 }
 
-fn translate_frame(source: &[u8], offset_x: i32, offset_y: i32) -> Vec<u8> {
+fn translate_frame(
+    canvas: Canvas,
+    source: &[u8], offset_x: i32, offset_y: i32) -> Vec<u8> {
     let mut output = vec![0; source.len()];
     for pixel in output.chunks_exact_mut(4) {
         pixel[3] = 255;
     }
-    for source_y in 0..HEIGHT as i32 {
+    for source_y in 0..canvas.height as i32 {
         let target_y = source_y + offset_y;
-        if !(0..HEIGHT as i32).contains(&target_y) {
+        if !(0..canvas.height as i32).contains(&target_y) {
             continue;
         }
-        for source_x in 0..WIDTH as i32 {
+        for source_x in 0..canvas.width as i32 {
             let target_x = source_x + offset_x;
-            if !(0..WIDTH as i32).contains(&target_x) {
+            if !(0..canvas.width as i32).contains(&target_x) {
                 continue;
             }
-            let source_index = ((source_y as u32 * WIDTH + source_x as u32) * 4) as usize;
-            let target_index = ((target_y as u32 * WIDTH + target_x as u32) * 4) as usize;
+            let source_index = ((source_y as u32 * canvas.width + source_x as u32) * 4) as usize;
+            let target_index = ((target_y as u32 * canvas.width + target_x as u32) * 4) as usize;
             output[target_index..target_index + 4]
                 .copy_from_slice(&source[source_index..source_index + 4]);
         }
@@ -1625,18 +1664,20 @@ fn translate_frame(source: &[u8], offset_x: i32, offset_y: i32) -> Vec<u8> {
     output
 }
 
-fn zoom_inset_frame(source: &[u8], amplitude: i32) -> Vec<u8> {
-    let inset_x = amplitude.clamp(0, WIDTH.saturating_sub(1) as i32) as u32;
-    let inset_y = amplitude.clamp(0, HEIGHT.saturating_sub(1) as i32) as u32;
-    let source_width = WIDTH.saturating_sub(inset_x.saturating_mul(2)).max(1);
-    let source_height = HEIGHT.saturating_sub(inset_y.saturating_mul(2)).max(1);
+fn zoom_inset_frame(
+    canvas: Canvas,
+    source: &[u8], amplitude: i32) -> Vec<u8> {
+    let inset_x = amplitude.clamp(0, canvas.width.saturating_sub(1) as i32) as u32;
+    let inset_y = amplitude.clamp(0, canvas.height.saturating_sub(1) as i32) as u32;
+    let source_width = canvas.width.saturating_sub(inset_x.saturating_mul(2)).max(1);
+    let source_height = canvas.height.saturating_sub(inset_y.saturating_mul(2)).max(1);
     let mut output = vec![0; source.len()];
-    for target_y in 0..HEIGHT {
-        let source_y = inset_y + target_y.saturating_mul(source_height) / HEIGHT;
-        for target_x in 0..WIDTH {
-            let source_x = inset_x + target_x.saturating_mul(source_width) / WIDTH;
-            let source_index = ((source_y * WIDTH + source_x) * 4) as usize;
-            let target_index = ((target_y * WIDTH + target_x) * 4) as usize;
+    for target_y in 0..canvas.height {
+        let source_y = inset_y + target_y.saturating_mul(source_height) / canvas.height;
+        for target_x in 0..canvas.width {
+            let source_x = inset_x + target_x.saturating_mul(source_width) / canvas.width;
+            let source_index = ((source_y * canvas.width + source_x) * 4) as usize;
+            let target_index = ((target_y * canvas.width + target_x) * 4) as usize;
             output[target_index..target_index + 4]
                 .copy_from_slice(&source[source_index..source_index + 4]);
         }
@@ -1891,13 +1932,21 @@ fn sequence_frame_name(name: &str, frame: u32) -> Result<String, String> {
     Ok(format!("{}{:04}{}", &name[..dot - 4], frame, &name[dot..]))
 }
 
-fn freeze_character_layers(background: &[u8], characters: &mut HashMap<u32, Character>) -> Vec<u8> {
-    let composed = compose_characters(background, characters);
+fn freeze_character_layers(
+    canvas: Canvas,
+    background: &[u8],
+    characters: &mut HashMap<u32, Character>,
+) -> Vec<u8> {
+    let composed = compose_characters(canvas, background, characters);
     characters.clear();
     composed
 }
 
-fn compose_characters(background: &[u8], characters: &HashMap<u32, Character>) -> Vec<u8> {
+fn compose_characters(
+    canvas: Canvas,
+    background: &[u8],
+    characters: &HashMap<u32, Character>,
+) -> Vec<u8> {
     let mut output = background.to_vec();
     let mut ordered: Vec<_> = characters.values().collect();
     ordered.sort_by_key(|character| character.order);
@@ -1905,7 +1954,7 @@ fn compose_characters(background: &[u8], characters: &HashMap<u32, Character>) -
         if !character.current || !character.visible || character.blend_rate <= 0 {
             continue;
         }
-        composite_character_surface(&mut output, character, &character.image);
+        composite_character_surface(canvas, &mut output, character, &character.image);
         if let Some(mouth) = &character.mouth {
             if let Some(eye) = character
                 .blink_state
@@ -1913,7 +1962,7 @@ fn compose_characters(background: &[u8], characters: &HashMap<u32, Character>) -
                 .flatten()
             {
                 let base_left = character.x - character.image.width as i32 / 2;
-                composite_character_surface_at(
+                composite_character_surface_at(canvas, 
                     &mut output,
                     character,
                     &eye.image,
@@ -1928,7 +1977,7 @@ fn compose_characters(background: &[u8], characters: &HashMap<u32, Character>) -
             };
             if let Some(overlay) = overlay {
                 let base_left = character.x - character.image.width as i32 / 2;
-                composite_character_surface_at(
+                composite_character_surface_at(canvas, 
                     &mut output,
                     character,
                     &overlay.image,
@@ -1938,18 +1987,19 @@ fn compose_characters(background: &[u8], characters: &HashMap<u32, Character>) -
             }
         }
         if let Some(secondary) = &character.secondary_image {
-            composite_character_surface(&mut output, character, secondary);
+            composite_character_surface(canvas, &mut output, character, secondary);
         }
     }
     output
 }
 
-fn composite_character_surface(output: &mut [u8], character: &Character, image: &Frame) {
+fn composite_character_surface(canvas: Canvas, output: &mut [u8], character: &Character, image: &Frame) {
     let left = character.x - image.width as i32 / 2;
-    composite_character_surface_at(output, character, image, left, character.y);
+    composite_character_surface_at(canvas, output, character, image, left, character.y);
 }
 
 fn composite_character_surface_at(
+    canvas: Canvas,
     output: &mut [u8],
     character: &Character,
     image: &Frame,
@@ -1958,16 +2008,16 @@ fn composite_character_surface_at(
 ) {
     for source_y in 0..image.height as i32 {
         let target_y = top + source_y;
-        if !(0..HEIGHT as i32).contains(&target_y) {
+        if !(0..canvas.height as i32).contains(&target_y) {
             continue;
         }
         for source_x in 0..image.width as i32 {
             let target_x = left + source_x;
-            if !(0..WIDTH as i32).contains(&target_x) {
+            if !(0..canvas.width as i32).contains(&target_x) {
                 continue;
             }
             let source_index = ((source_y as u32 * image.width + source_x as u32) * 4) as usize;
-            let target_index = ((target_y as u32 * WIDTH + target_x as u32) * 4) as usize;
+            let target_index = ((target_y as u32 * canvas.width + target_x as u32) * 4) as usize;
             let alpha = u32::from(image.rgba[source_index + 3])
                 * character.blend_rate.clamp(0, 256) as u32
                 / 256;
@@ -1982,16 +2032,19 @@ fn composite_character_surface_at(
     }
 }
 
-fn transition_completion(transition_type: i32) -> u32 {
+fn transition_completion(
+    canvas: Canvas,
+    transition_type: i32) -> u32 {
     match transition_type {
         0 => 255,
-        16 => HEIGHT,
-        14 | 15 | 17 => WIDTH,
+        16 => canvas.height,
+        14 | 15 | 17 => canvas.width,
         _ => unreachable!("only implemented transition types can be active"),
     }
 }
 
 fn render_transition(
+    canvas: Canvas,
     transition: &mut TransitionState,
     previous_progress: u32,
     output: &mut Vec<u8>,
@@ -2027,46 +2080,46 @@ fn render_transition(
             } else {
                 (&transition.new_rgba, 399 - transition.progress)
             };
-            let scaled = center_zoom_nearest(source, WIDTH, HEIGHT, transition_zoom_factor(index));
+            let scaled = center_zoom_nearest(source, canvas.width, canvas.height, transition_zoom_factor(index));
             for (target, scaled) in output.iter_mut().zip(scaled) {
                 *target = (*target & scaled) + (((*target ^ scaled) & 0xFE) >> 1);
             }
         }
-        3..=13 => render_tile_transition(transition, previous_progress, output),
+        3..=13 => render_tile_transition(canvas, transition, previous_progress, output),
         14 => {
             output.clone_from(&transition.old_rgba);
-            let right = transition.progress.min(WIDTH);
-            let bottom = right.saturating_mul(HEIGHT) / WIDTH;
-            copy_transition_rect(&transition.new_rgba, output, 0, 0, right, bottom);
+            let right = transition.progress.min(canvas.width);
+            let bottom = right.saturating_mul(canvas.height) / canvas.width;
+            copy_transition_rect(canvas, &transition.new_rgba, output, 0, 0, right, bottom);
         }
         15 => {
             output.clone_from(&transition.old_rgba);
-            let right = transition.progress.min(WIDTH);
-            let bottom = right.saturating_mul(HEIGHT) / WIDTH;
-            copy_transition_rect(&transition.new_rgba, output, 0, 0, right, bottom);
-            fill_transition_rect(output, 0, bottom, right, HEIGHT, 0xFF00_0000);
-            fill_transition_rect(output, right, 0, WIDTH, bottom, 0xFF00_0000);
+            let right = transition.progress.min(canvas.width);
+            let bottom = right.saturating_mul(canvas.height) / canvas.width;
+            copy_transition_rect(canvas, &transition.new_rgba, output, 0, 0, right, bottom);
+            fill_transition_rect(canvas, output, 0, bottom, right, canvas.height, 0xFF00_0000);
+            fill_transition_rect(canvas, output, right, 0, canvas.width, bottom, 0xFF00_0000);
         }
         16 => {
             output.clone_from(&transition.old_rgba);
-            copy_transition_rect(
+            copy_transition_rect(canvas, 
                 &transition.new_rgba,
                 output,
                 0,
                 0,
-                WIDTH,
-                transition.progress.min(HEIGHT),
+                canvas.width,
+                transition.progress.min(canvas.height),
             );
         }
         17 => {
             output.clone_from(&transition.old_rgba);
-            copy_transition_rect(
+            copy_transition_rect(canvas, 
                 &transition.new_rgba,
                 output,
                 0,
                 0,
-                transition.progress.min(WIDTH),
-                HEIGHT,
+                transition.progress.min(canvas.width),
+                canvas.height,
             );
         }
         18 => {
@@ -2092,9 +2145,11 @@ fn msvc_rand(state: &mut u32) -> i32 {
     ((*state >> 16) & 0x7fff) as i32
 }
 
-fn transition_tile_values(mode: i32, rand_state: &mut u32) -> Vec<i32> {
-    let columns = WIDTH.div_ceil(40) as i32;
-    let rows = HEIGHT.div_ceil(40) as i32;
+fn transition_tile_values(
+    canvas: Canvas,
+    mode: i32, rand_state: &mut u32) -> Vec<i32> {
+    let columns = canvas.width.div_ceil(40) as i32;
+    let rows = canvas.height.div_ceil(40) as i32;
     let mut values = vec![0; (columns * rows) as usize];
     let index = |x: i32, y: i32| (y * columns + x) as usize;
     match mode {
@@ -2182,12 +2237,13 @@ fn transition_tile_values(mode: i32, rand_state: &mut u32) -> Vec<i32> {
 }
 
 fn render_tile_transition(
+    canvas: Canvas,
     transition: &mut TransitionState,
     previous_progress: u32,
     output: &mut [u8],
 ) {
-    let columns = WIDTH.div_ceil(40);
-    let tile_count = (WIDTH.div_ceil(40) * HEIGHT.div_ceil(40)) as i32;
+    let columns = canvas.width.div_ceil(40);
+    let tile_count = (canvas.width.div_ceil(40) * canvas.height.div_ceil(40)) as i32;
     let delta =
         i32::try_from(transition.progress.saturating_sub(previous_progress)).unwrap_or(i32::MAX);
     let values = transition
@@ -2206,7 +2262,7 @@ fn render_tile_transition(
                 let phase = phase.clamp(0, 10) as u32;
                 let left = tile as u32 % columns * 40;
                 let top = tile as u32 / columns * 40;
-                copy_transition_rect(
+                copy_transition_rect(canvas, 
                     &transition.new_rgba,
                     output,
                     left,
@@ -2277,6 +2333,7 @@ fn center_zoom_nearest(source: &[u8], width: u32, height: u32, factor: f64) -> V
 }
 
 fn copy_transition_rect(
+    canvas: Canvas,
     source: &[u8],
     output: &mut [u8],
     left: u32,
@@ -2284,14 +2341,15 @@ fn copy_transition_rect(
     right: u32,
     bottom: u32,
 ) {
-    for y in top.min(HEIGHT)..bottom.min(HEIGHT) {
-        let start = ((y * WIDTH + left.min(WIDTH)) * 4) as usize;
-        let end = ((y * WIDTH + right.min(WIDTH)) * 4) as usize;
+    for y in top.min(canvas.height)..bottom.min(canvas.height) {
+        let start = ((y * canvas.width + left.min(canvas.width)) * 4) as usize;
+        let end = ((y * canvas.width + right.min(canvas.width)) * 4) as usize;
         output[start..end].copy_from_slice(&source[start..end]);
     }
 }
 
 fn fill_transition_rect(
+    canvas: Canvas,
     output: &mut [u8],
     left: u32,
     top: u32,
@@ -2300,9 +2358,9 @@ fn fill_transition_rect(
     color: u32,
 ) {
     let pixel = color.to_le_bytes();
-    for y in top.min(HEIGHT)..bottom.min(HEIGHT) {
-        for x in left.min(WIDTH)..right.min(WIDTH) {
-            let index = ((y * WIDTH + x) * 4) as usize;
+    for y in top.min(canvas.height)..bottom.min(canvas.height) {
+        for x in left.min(canvas.width)..right.min(canvas.width) {
+            let index = ((y * canvas.width + x) * 4) as usize;
             output[index..index + 4].copy_from_slice(&pixel);
         }
     }
@@ -2350,38 +2408,41 @@ fn game_menu_hit(
 }
 
 fn composite_panel_state(
+    canvas: Canvas,
     output: &mut [u8],
     transition: Option<&PanelTransition>,
     panel: Option<&Frame>,
 ) {
     if let Some(transition) = transition {
-        render_panel_transition(output, transition);
+        render_panel_transition(canvas, output, transition);
     } else if let Some(panel) = panel {
-        composite_panel(output, panel, 255);
+        composite_panel(canvas, output, panel, 255);
     }
 }
 
-fn render_panel_transition(output: &mut [u8], transition: &PanelTransition) {
+fn render_panel_transition(canvas: Canvas, output: &mut [u8], transition: &PanelTransition) {
     let ticks = transition.elapsed_ms / 10;
     let progress = transition.speed.saturating_mul(ticks).min(255) as u8;
     if let Some(old) = &transition.old {
-        composite_panel(output, old, 255 - progress);
+        composite_panel(canvas, output, old, 255 - progress);
     }
     if let Some(new) = &transition.new {
-        composite_panel(output, new, progress);
+        composite_panel(canvas, output, new, progress);
     }
 }
 
-fn composite_panel(output: &mut [u8], panel: &Frame, opacity: u8) {
-    let top = HEIGHT as i32 - panel.height as i32 + 64;
+fn composite_panel(
+    canvas: Canvas,
+    output: &mut [u8], panel: &Frame, opacity: u8) {
+    let top = canvas.height as i32 - panel.height as i32 + 64;
     for source_y in 0..panel.height as i32 {
         let target_y = top + source_y;
-        if !(0..HEIGHT as i32).contains(&target_y) {
+        if !(0..canvas.height as i32).contains(&target_y) {
             continue;
         }
-        for source_x in 0..panel.width.min(WIDTH) {
+        for source_x in 0..panel.width.min(canvas.width) {
             let source_index = ((source_y as u32 * panel.width + source_x) * 4) as usize;
-            let target_index = ((target_y as u32 * WIDTH + source_x) * 4) as usize;
+            let target_index = ((target_y as u32 * canvas.width + source_x) * 4) as usize;
             let alpha = u32::from(panel.rgba[source_index + 3]) * u32::from(opacity) / 255;
             for channel in 0..3 {
                 let source = u32::from(panel.rgba[source_index + channel]);
@@ -2539,17 +2600,19 @@ fn blend_pixel(target: &mut [u8], source: &[u8]) {
     target[3] = (alpha + (target_alpha * inverse + 127) / 255).min(255) as u8;
 }
 
-fn crop_background(source: &Frame, x: i32, y: i32) -> Result<Frame, String> {
+fn crop_background(
+    canvas: Canvas,
+    source: &Frame, x: i32, y: i32) -> Result<Frame, String> {
     let x = u32::try_from(x.max(0)).unwrap_or(0);
     let y = u32::try_from(y.max(0)).unwrap_or(0);
-    let mut rgba = vec![0; WIDTH as usize * HEIGHT as usize * 4];
+    let mut rgba = vec![0; canvas.width as usize * canvas.height as usize * 4];
     for pixel in rgba.chunks_exact_mut(4) {
         pixel[3] = 255;
     }
-    let copy_width = WIDTH.min(source.width.saturating_sub(x));
-    let copy_height = HEIGHT.min(source.height.saturating_sub(y));
+    let copy_width = canvas.width.min(source.width.saturating_sub(x));
+    let copy_height = canvas.height.min(source.height.saturating_sub(y));
     let source_stride = source.width as usize * 4;
-    let target_stride = WIDTH as usize * 4;
+    let target_stride = canvas.width as usize * 4;
     let copy_bytes = copy_width as usize * 4;
     for row in 0..copy_height as usize {
         let source_start = (y as usize + row) * source_stride + x as usize * 4;
@@ -2558,8 +2621,8 @@ fn crop_background(source: &Frame, x: i32, y: i32) -> Result<Frame, String> {
             .copy_from_slice(&source.rgba[source_start..source_start + copy_bytes]);
     }
     Ok(Frame {
-        width: WIDTH,
-        height: HEIGHT,
+        width: canvas.width,
+        height: canvas.height,
         rgba,
         serial: 0,
     })
@@ -2581,7 +2644,9 @@ fn blend_frames(old: &[u8], new: &[u8], progress: u32, output: &mut [u8]) {
     }
 }
 
-fn decode_transition_mask(data: &[u8]) -> Result<Vec<u8>, String> {
+fn decode_transition_mask(
+    canvas: Canvas,
+    data: &[u8]) -> Result<Vec<u8>, String> {
     let mut decoder = png::Decoder::new(Cursor::new(data));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder
@@ -2596,10 +2661,10 @@ fn decode_transition_mask(data: &[u8]) -> Result<Vec<u8>, String> {
     let info = reader
         .next_frame(&mut pixels)
         .map_err(|e| format!("transition mask PNG frame: {e}"))?;
-    if info.width != WIDTH || info.height != HEIGHT {
+    if info.width != canvas.width || info.height != canvas.height {
         return Err(format!(
-            "transition mask is {}x{}, expected {WIDTH}x{HEIGHT}",
-            info.width, info.height
+            "transition mask is {}x{}, expected {}x{}",
+            info.width, info.height, canvas.width, canvas.height
         ));
     }
     if info.color_type != png::ColorType::Grayscale {
@@ -2787,6 +2852,11 @@ fn decode_png(data: &[u8]) -> Result<Frame, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Supipara/Trinoline surface, which the scene tests exercise.
+    const WIDTH: u32 = 1280;
+    const HEIGHT: u32 = 720;
+    const CANVAS: Canvas = Canvas::new(WIDTH, HEIGHT);
     use crate::profile::SUPIPARA_PROFILE;
 
     fn character(id: u8, current: bool, next: bool) -> Character {
@@ -2824,6 +2894,7 @@ mod tests {
     fn title_menu_maps_original_new_and_load_rows() {
         let scene = SceneSystem {
             profile: &SUPIPARA_PROFILE,
+            canvas: CANVAS,
             current: SceneKind::MainMenu,
             frame: Frame {
                 width: WIDTH,
@@ -2913,7 +2984,7 @@ mod tests {
             serial: 0,
         };
         let mut output = vec![0; (WIDTH * HEIGHT * 4) as usize];
-        composite_panel_state(&mut output, None, Some(&panel));
+        composite_panel_state(CANVAS, &mut output, None, Some(&panel));
         let bottom_left = ((HEIGHT - 1) * WIDTH * 4) as usize;
         assert_eq!(&output[bottom_left..bottom_left + 4], &[255, 255, 255, 255]);
         let previous_left = bottom_left - (WIDTH * 4) as usize;
@@ -2922,7 +2993,7 @@ mod tests {
 
     #[test]
     fn active_panel_is_preserved_in_scene_transition_targets() {
-        let black = black_rgba();
+        let black = black_rgba(CANVAS, );
         let panel = Frame {
             width: 1,
             height: 65,
@@ -2931,6 +3002,7 @@ mod tests {
         };
         let mut scene = SceneSystem {
             profile: &SUPIPARA_PROFILE,
+            canvas: CANVAS,
             current: SceneKind::Script,
             frame: Frame {
                 width: WIDTH,
@@ -3053,6 +3125,7 @@ mod tests {
         let old = vec![0, 0, 0, 255];
         let mut scene = SceneSystem {
             profile: &SUPIPARA_PROFILE,
+            canvas: CANVAS,
             current: SceneKind::Script,
             frame: Frame {
                 width: 1,
@@ -3099,6 +3172,7 @@ mod tests {
     fn panel_transition_uses_original_default_speed_and_10ms_ticks() {
         let mut scene = SceneSystem {
             profile: &SUPIPARA_PROFILE,
+            canvas: CANVAS,
             current: SceneKind::Script,
             frame: Frame {
                 width: WIDTH,
@@ -3155,7 +3229,7 @@ mod tests {
         }
         let source_index = ((100 * WIDTH + 100) * 4) as usize;
         source[source_index..source_index + 4].copy_from_slice(&[255, 0, 0, 255]);
-        let shifted = translate_frame(&source, -10, 0);
+        let shifted = translate_frame(CANVAS, &source, -10, 0);
         let target_index = ((100 * WIDTH + 90) * 4) as usize;
         assert_eq!(&shifted[target_index..target_index + 4], &[255, 0, 0, 255]);
         assert_eq!(
@@ -3163,7 +3237,7 @@ mod tests {
             &[0, 0, 0, 255]
         );
         assert_eq!(
-            rotate_frame(&source, WIDTH as f64 / 2.0, HEIGHT as f64 / 2.0, 0.0,),
+            rotate_frame(CANVAS, &source, WIDTH as f64 / 2.0, HEIGHT as f64 / 2.0, 0.0,),
             source
         );
 
@@ -3305,14 +3379,14 @@ mod tests {
             serial: 1,
         });
         let characters = HashMap::from([(1, character)]);
-        let composed = compose_characters(&[0, 0, 0, 255], &characters);
+        let composed = compose_characters(CANVAS, &[0, 0, 0, 255], &characters);
         assert_eq!(composed, [127, 128, 0, 255]);
     }
 
     #[test]
     fn freeze_bakes_visible_characters_into_the_scene_and_clears_layers() {
         let mut characters = HashMap::from([(1, character(200, true, true))]);
-        let frozen = freeze_character_layers(&[0, 0, 0, 255], &mut characters);
+        let frozen = freeze_character_layers(CANVAS, &[0, 0, 0, 255], &mut characters);
         assert_eq!(frozen, [200, 200, 200, 255]);
         assert!(characters.is_empty());
     }
@@ -3489,15 +3563,15 @@ mod tests {
                 progress,
             };
             let mut output = old.clone();
-            render_transition(&mut transition, 0, &mut output);
+            render_transition(CANVAS, &mut transition, 0, &mut output);
             for ((x, y), expected) in samples {
                 assert_eq!(pixel(&output, x, y), expected);
             }
         }
-        assert_eq!(transition_completion(14), WIDTH);
-        assert_eq!(transition_completion(15), WIDTH);
-        assert_eq!(transition_completion(16), HEIGHT);
-        assert_eq!(transition_completion(17), WIDTH);
+        assert_eq!(transition_completion(CANVAS, 14), WIDTH);
+        assert_eq!(transition_completion(CANVAS, 15), WIDTH);
+        assert_eq!(transition_completion(CANVAS, 16), HEIGHT);
+        assert_eq!(transition_completion(CANVAS, 17), WIDTH);
     }
 
     #[test]
@@ -3507,11 +3581,11 @@ mod tests {
         assert_eq!(msvc_rand(&mut state), 18_467);
 
         let mut state = 1;
-        let scattered = transition_tile_values(9, &mut state);
+        let scattered = transition_tile_values(CANVAS, 9, &mut state);
         assert_eq!(&scattered[..2], &[-41, -1187]);
 
         let mut state = 1;
-        let columns = transition_tile_values(10, &mut state);
+        let columns = transition_tile_values(CANVAS, 10, &mut state);
         let stride = WIDTH.div_ceil(40) as usize;
         assert_eq!(columns[0], -1620);
         assert_eq!(columns[stride], -1940);
@@ -3526,28 +3600,28 @@ mod tests {
         let at = |values: &[i32], x: usize, y: usize| values[y * columns + x];
 
         let mut rand_state = 1;
-        let row_forward = transition_tile_values(1, &mut rand_state);
+        let row_forward = transition_tile_values(CANVAS, 1, &mut rand_state);
         assert_eq!(at(&row_forward, 0, 0), 0);
         assert_eq!(at(&row_forward, columns - 1, rows - 1), -5750);
-        let row_reverse = transition_tile_values(2, &mut rand_state);
+        let row_reverse = transition_tile_values(CANVAS, 2, &mut rand_state);
         assert_eq!(at(&row_reverse, 0, 0), -5750);
         assert_eq!(at(&row_reverse, columns - 1, rows - 1), 0);
-        let column_forward = transition_tile_values(3, &mut rand_state);
+        let column_forward = transition_tile_values(CANVAS, 3, &mut rand_state);
         assert_eq!(at(&column_forward, 1, 0), -320);
         assert_eq!(at(&column_forward, 0, 1), -10);
-        let column_reverse = transition_tile_values(4, &mut rand_state);
+        let column_reverse = transition_tile_values(CANVAS, 4, &mut rand_state);
         assert_eq!(at(&column_reverse, 0, 0), -10090);
         assert_eq!(at(&column_reverse, columns - 1, rows - 1), 0);
-        let diagonal = transition_tile_values(5, &mut rand_state);
+        let diagonal = transition_tile_values(CANVAS, 5, &mut rand_state);
         assert_eq!(at(&diagonal, 1, 0), -500);
         assert_eq!(at(&diagonal, 0, 1), -500);
-        let diagonal_reverse = transition_tile_values(6, &mut rand_state);
+        let diagonal_reverse = transition_tile_values(CANVAS, 6, &mut rand_state);
         assert_eq!(at(&diagonal_reverse, columns - 1, rows - 1), 0);
-        let edge_radial = transition_tile_values(7, &mut rand_state);
+        let edge_radial = transition_tile_values(CANVAS, 7, &mut rand_state);
         assert_eq!(at(&edge_radial, 0, 0), 0);
         assert_eq!(at(&edge_radial, columns - 1, rows - 1), -320);
         assert_eq!(at(&edge_radial, columns / 2, rows / 2), -5760);
-        let center_radial = transition_tile_values(8, &mut rand_state);
+        let center_radial = transition_tile_values(CANVAS, 8, &mut rand_state);
         assert_eq!(at(&center_radial, columns / 2, rows / 2), 0);
         assert_eq!(at(&center_radial, 0, 0), -5760);
 
@@ -3558,13 +3632,13 @@ mod tests {
             old_rgba: old.clone(),
             new_rgba: new,
             mask: None,
-            tile_values: Some(transition_tile_values(0, &mut rand_state)),
+            tile_values: Some(transition_tile_values(CANVAS, 0, &mut rand_state)),
             duration: 1,
             elapsed_ms: 0,
             progress: 576,
         };
         let mut output = old;
-        render_transition(&mut transition, 0, &mut output);
+        render_transition(CANVAS, &mut transition, 0, &mut output);
         let pixel = |x: u32, y: u32| {
             let index = ((y * WIDTH + x) * 4) as usize;
             <[u8; 4]>::try_from(&output[index..index + 4]).unwrap()
@@ -3601,7 +3675,7 @@ mod tests {
             progress: 399,
         };
         let mut output = old;
-        render_transition(&mut transition, 398, &mut output);
+        render_transition(CANVAS, &mut transition, 398, &mut output);
         assert_eq!(&output[..4], &[150, 150, 150, 255]);
     }
 
@@ -3620,11 +3694,11 @@ mod tests {
             progress: 256,
         };
         let mut output = old;
-        render_transition(&mut transition, 0, &mut output);
+        render_transition(CANVAS, &mut transition, 0, &mut output);
         assert_eq!(&output[..4], &[150, 150, 150, 255]);
 
         transition.progress = 511;
-        render_transition(&mut transition, 256, &mut output);
+        render_transition(CANVAS, &mut transition, 256, &mut output);
         assert_eq!(&output[..4], &[199, 199, 199, 255]);
     }
 
@@ -3642,7 +3716,7 @@ mod tests {
                 .write_image_data(&source)
                 .unwrap();
         }
-        let mask = decode_transition_mask(&encoded).unwrap();
+        let mask = decode_transition_mask(CANVAS, &encoded).unwrap();
         assert_eq!(mask.len(), source.len());
         assert!(mask.iter().all(|&value| value == !0x2A));
     }
@@ -3665,12 +3739,12 @@ mod tests {
             progress: 15,
         };
         let mut output = old;
-        render_transition(&mut transition, 5, &mut output);
+        render_transition(CANVAS, &mut transition, 5, &mut output);
         assert_eq!(&output[..4], &[0, 255, 0, 255]);
         assert_eq!(&output[4..8], &[255, 0, 0, 255]);
 
         transition.progress = 25;
-        render_transition(&mut transition, 15, &mut output);
+        render_transition(CANVAS, &mut transition, 15, &mut output);
         assert_eq!(&output[4..8], &[0, 255, 0, 255]);
     }
 
@@ -3692,6 +3766,7 @@ mod tests {
 
         let mut scene = SceneSystem {
             profile: &SUPIPARA_PROFILE,
+            canvas: CANVAS,
             current: SceneKind::Script,
             frame: Frame {
                 width: 1,

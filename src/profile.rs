@@ -161,6 +161,8 @@ pub struct GameProfile {
     pub id: &'static str,
     pub archive: &'static ArchiveProfile,
     pub entry_script: &'static str,
+    /// The pixel space the game's script coordinates live in.
+    pub canvas: crate::scene::Canvas,
     pub ui: UiProfile,
 }
 
@@ -172,6 +174,11 @@ impl GameProfile {
     /// True when the runtime owns the title screen and must show it first.
     pub fn has_title_screen(&self) -> bool {
         self.ui.title.is_some()
+    }
+
+    /// The drawing surface the game's script coordinates are expressed in.
+    pub fn canvas(&self) -> crate::scene::Canvas {
+        self.canvas
     }
 }
 
@@ -356,6 +363,7 @@ pub static TRINOLINE_PROFILE: GameProfile = GameProfile {
     id: "trinoline",
     archive: &TRINOLINE_ARCHIVE_PROFILE,
     entry_script: "test.sc",
+    canvas: crate::scene::Canvas::new(1280, 720),
     ui: UiProfile {
         title: Some(TitleProfile {
             background: "topmenu\\TopMenu.png",
@@ -427,6 +435,7 @@ pub static SUPIPARA_PROFILE: GameProfile = GameProfile {
     id: "supipara-story-01",
     archive: &SUPIPARA_ARCHIVE_PROFILE,
     entry_script: "test.sc",
+    canvas: crate::scene::Canvas::new(1280, 720),
     ui: UiProfile {
         title: Some(TitleProfile {
             background: "topMenu1.png",
