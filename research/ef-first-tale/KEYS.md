@@ -57,3 +57,24 @@ inflate (for `type == 1` entries the RC4 layer is skipped).
 - `mov.paz`: index does not parse with slot 2; the movie archive carries an
   extra 256-byte key block after the entry count (GARbro's `MovPazArchive`),
   so it needs its own path.
+
+## Resolved (round 2)
+
+All four image/script archives now decode. The archive-to-slot rotation is a
+literal `+3` shift over the file order `scr bg st sys bgm voice se mov`:
+
+| archive | index slot | payload slot |
+| --- | --- | --- |
+| scr | 0 scr | 3 sys |
+| bg  | 1 bg  | 4 bgm |
+| st  | 3 sys | 6 se  |
+| sys | 4 bgm | 7 mov |
+
+Signature entries verified end to end: `000_01mugai.sc` (text), `WHITE.png`
+(2309 B), `st_yuko13g05.png` (999x600 sprite), `topmenu.png` (800x600 title).
+
+The type password for ef is **per-archive**, not per-extension: `a7b77qgx` is
+what every encrypted image entry uses. `102ycz1s` is the script password.
+`bgm`, `se` and `voice` do not yield `OggS`/`RIFF` with any recovered key, so
+their payloads use a different scheme and remain unresolved; `mov.paz` also
+still needs its own path.
