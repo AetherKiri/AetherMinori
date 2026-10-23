@@ -2,6 +2,38 @@ use std::collections::HashMap;
 
 use crate::command::CommandKind;
 
+/// Which localisation of a script to execute.
+///
+/// ef - the first tale ships a single script set in which individual lines are
+/// prefixed with `[e]` or `[j]`. The two variants differ in pacing (transition
+/// and wait durations) rather than in dialogue, and each variant is a complete,
+/// self-contained program: every `.label`, `.goto` and `.chain` target resolves
+/// inside its own variant. Lines belonging to the other variant are skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Language {
+    #[default]
+    Japanese,
+    English,
+}
+
+impl Language {
+    pub fn from_code(code: &str) -> Option<Self> {
+        Some(match code.to_ascii_lowercase().as_str() {
+            "j" | "ja" | "jp" => Self::Japanese,
+            "e" | "en" => Self::English,
+            _ => return None,
+        })
+    }
+
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Japanese => "j",
+            Self::English => "e",
+        }
+    }
+}
+
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Statement {
     Empty,
@@ -27,8 +59,15 @@ pub struct Program {
 
 impl Program {
     pub fn parse(source: &str) -> Result<Self, String> {
+        Self::parse_with_language(source, Language::default())
+    }
+
+    pub fn parse_with_language(source: &str, language: Language) -> Result<Self, String> {
         let mut program = Program::default();
         for (line_number, line) in source.lines().enumerate() {
+            let Some(line) = select_line(line, language) else {
+                continue;
+            };
             let statement =
                 parse_line(line).map_err(|e| format!("line {}: {e}", line_number + 1))?;
             if let Statement::Label(label) = &statement
@@ -42,6 +81,27 @@ impl Program {
             program.statements.push(statement);
         }
         Ok(program)
+    }
+}
+
+/// Strip the optional `[x]` localisation prefix. Returns `None` when the line
+/// belongs to a different variant, which is how the other language's pass is
+/// skipped. A line without a prefix belongs to every variant.
+fn select_line(line: &str, language: Language) -> Option<&str> {
+    let trimmed = line.trim();
+    let Some(rest) = trimmed.strip_prefix('[') else {
+        return Some(trimmed);
+    };
+    let Some((code, body)) = rest.split_once(']') else {
+        return Some(trimmed);
+    };
+    if code.len() != 1 {
+        return Some(trimmed);
+    }
+    match Language::from_code(code) {
+        Some(found) if found == language => Some(body.trim_start()),
+        Some(_) => None,
+        None => Some(trimmed),
     }
 }
 
@@ -184,6 +244,24 @@ mod tests {
                     "speaker".into(),
                     "words with spaces".into(),
                 ],
+            }
+        );
+    }
+
+    #[test]
+    fn localisation_prefixes_select_one_variant() {
+        let source = "[e].wait 350\n[j].wait 100\n.wait 20\n[e].label start\n";
+        let english = Program::parse_with_language(source, Language::English).unwrap();
+        assert_eq!(english.statements.len(), 3);
+        assert_eq!(english.labels.get("start"), Some(&2));
+        let japanese = Program::parse_with_language(source, Language::Japanese).unwrap();
+        assert_eq!(japanese.statements.len(), 2);
+        assert!(japanese.labels.is_empty());
+        assert_eq!(
+            japanese.statements[0],
+            Statement::Command {
+                kind: CommandKind::Wait,
+                arguments: vec!["100".into()],
             }
         );
     }

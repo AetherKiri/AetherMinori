@@ -13,7 +13,7 @@ use crate::persistence::{
 };
 use crate::profile::{GameProfile, detect_game_profile};
 use crate::scene::{Frame, GameMenuAction, MainMenuAction, SceneKind, SceneSystem};
-use crate::script::Program;
+use crate::script::{Language, Program};
 use crate::vfs::Vfs;
 use crate::vm::{
     BgmRequest, CharRequest, EffectRequest, ManualVmState, MessageRequest, MovieRequest,
@@ -69,6 +69,14 @@ pub struct EngineInputEvent {
     modifiers: i32,
     unicode_codepoint: u32,
     reserved_u32: u32,
+    reserved_u64: [u64; 2],
+    reserved_ptr: [*mut c_void; 2],
+}
+
+#[repr(C)]
+pub struct EngineOption {
+    key_utf8: *const c_char,
+    value_utf8: *const c_char,
     reserved_u64: [u64; 2],
     reserved_ptr: [*mut c_void; 2],
 }
@@ -165,6 +173,7 @@ struct Runtime {
     persistence_pending: bool,
     pending_save_slot: Option<u8>,
     persisted_globals: HashMap<String, i32>,
+    language: Language,
     scene: Option<SceneSystem>,
     error: CString,
     failed: bool,
@@ -342,6 +351,7 @@ impl Runtime {
         let program = load_program(
             self.vfs.as_ref().ok_or("game VFS is not mounted")?,
             &save.script,
+            self.language,
         )?;
         let active_message_id = save.message.as_ref().map(|message| message.id);
         let saved_bgm = save.bgm.clone().or_else(|| infer_bgm_before(&program, pc));
@@ -946,6 +956,7 @@ unsafe extern "C" fn create(
         persistence_pending: false,
         pending_save_slot: None,
         persisted_globals: HashMap::new(),
+        language: Language::default(),
         scene: None,
         error: safe_cstring(""),
         failed: false,
@@ -1145,8 +1156,9 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
         scene.tick_shake(delta_ms);
     }
 
+    let language = runtime.language;
     let result = match (&runtime.vfs, &mut runtime.vm) {
-        (Some(vfs), Some(vm)) => vm.tick(delta_ms, |name| load_program(vfs, name)),
+        (Some(vfs), Some(vm)) => vm.tick(delta_ms, |name| load_program(vfs, name, language)),
         _ => Ok(Vec::new()),
     };
     match result {
@@ -1510,10 +1522,33 @@ unsafe extern "C" fn unary(opaque: *mut c_void) -> i32 {
     }
 }
 unsafe extern "C" fn set_option(opaque: *mut c_void, option: *const c_void) -> i32 {
-    if opaque.is_null() || option.is_null() {
-        INVALID_ARGUMENT
-    } else {
-        OK
+    let Some(runtime) = (unsafe { runtime(opaque) }) else {
+        return INVALID_ARGUMENT;
+    };
+    if option.is_null() {
+        return INVALID_ARGUMENT;
+    }
+    let option = unsafe { &*(option as *const EngineOption) };
+    if option.key_utf8.is_null() || option.value_utf8.is_null() {
+        return INVALID_ARGUMENT;
+    }
+    let key = unsafe { CStr::from_ptr(option.key_utf8) }
+        .to_string_lossy()
+        .into_owned();
+    let value = unsafe { CStr::from_ptr(option.value_utf8) }
+        .to_string_lossy()
+        .into_owned();
+    match key.as_str() {
+        // ef ships both variants in one script set; the host picks one.
+        "minori.language" | "language" => match Language::from_code(&value) {
+            Some(language) => {
+                runtime.language = language;
+                runtime.error = safe_cstring("");
+                OK
+            }
+            None => runtime.fail(format!("unknown script language: {value}"), INVALID_ARGUMENT),
+        },
+        _ => OK,
     }
 }
 unsafe extern "C" fn set_surface_size(opaque: *mut c_void, width: u32, height: u32) -> i32 {
@@ -1568,19 +1603,35 @@ unsafe extern "C" fn read_frame(
     OK
 }
 
-fn load_program(vfs: &Vfs, name: &str) -> Result<Program, String> {
+fn load_program(vfs: &Vfs, name: &str, language: Language) -> Result<Program, String> {
     let bytes = vfs.read(name)?;
-    let (source, _, had_errors) = encoding_rs::SHIFT_JIS.decode(&bytes);
-    if had_errors {
-        return Err(format!("{name}: invalid Shift-JIS script"));
+    Program::parse_with_language(&decode_script(name, &bytes)?, language)
+        .map_err(|error| format!("{name}: {error}"))
+}
+
+/// Scripts are Shift-JIS on the Japanese releases and GBK on the Chinese one.
+/// The two encodings disagree on enough byte sequences that trying Shift-JIS
+/// first and falling back to GBK is unambiguous in practice: a GBK script
+/// routinely fails the Shift-JIS decode, while a Shift-JIS script that happens
+/// to decode as GBK would still have to parse as a valid command stream.
+fn decode_script(name: &str, bytes: &[u8]) -> Result<String, String> {
+    let (shift_jis, _, sjis_errors) = encoding_rs::SHIFT_JIS.decode(bytes);
+    if !sjis_errors {
+        return Ok(shift_jis.into_owned());
     }
-    Program::parse(&source).map_err(|error| format!("{name}: {error}"))
+    let (gbk, _, gbk_errors) = encoding_rs::GBK.decode(bytes);
+    if !gbk_errors {
+        return Ok(gbk.into_owned());
+    }
+    Err(format!(
+        "{name}: script is neither Shift-JIS nor GBK"
+    ))
 }
 
 fn start_new_game(runtime: &mut Runtime) -> Result<(), String> {
     let profile = runtime.profile.ok_or("game profile is not selected")?;
     let vfs = runtime.vfs.as_ref().ok_or("game VFS is not mounted")?;
-    let program = load_program(vfs, profile.entry_script)?;
+    let program = load_program(vfs, profile.entry_script, runtime.language)?;
     runtime
         .scene
         .as_mut()
