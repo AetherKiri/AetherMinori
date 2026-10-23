@@ -179,6 +179,29 @@ pub struct StageRequest {
     pub extras: Vec<StageExtra>,
 }
 
+/// A .screen or .overlay layer set.
+///
+/// Both commands name one or more 1-pixel-wide gradient strips: the engine
+/// stretches each strip across the whole surface, so the strip row colours
+/// become the frame vertical colour ramp. .screen goes below the scene,
+/// .overlay above the characters, and .frame adds a full-size still on top.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayerRequest {
+    /// One resource name per screen depth. An empty list clears the layer.
+    pub images: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HsvFilter {
+    pub hue: i32,
+    pub saturation: i32,
+    pub brightness: i32,
+    pub contrast: i32,
+    pub red: i32,
+    pub green: i32,
+    pub blue: i32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransitionConfig {
     pub transition_type: i32,
@@ -201,6 +224,10 @@ pub enum VmEvent {
     PersistGlobals,
     ScriptChanged(String),
     SetStage(StageRequest),
+    SetScreen(LayerRequest),
+    SetOverlay(LayerRequest),
+    SetFrameStills(Vec<String>),
+    SetHsvFilter(HsvFilter),
     SetTransition(TransitionConfig),
     Select(Vec<SelectOption>),
     PlayBgm(BgmRequest),
@@ -826,6 +853,40 @@ impl Vm {
                 }));
                 self.state = VmState::WaitingMovie;
             }
+            CommandKind::Screen => {
+                events.push(VmEvent::SetScreen(parse_layer(&arguments)?));
+            }
+            CommandKind::Overlay => {
+                events.push(VmEvent::SetOverlay(parse_layer(&arguments)?));
+            }
+            CommandKind::Frame => {
+                let mut images = Vec::new();
+                for argument in &arguments {
+                    let name = strip_resource_prefix(argument);
+                    if name != "*" && !name.is_empty() {
+                        images.push(name);
+                    }
+                }
+                events.push(VmEvent::SetFrameStills(images));
+            }
+            CommandKind::HsvFilter => {
+                if arguments.len() < 6 {
+                    return Err(format!(
+                        "HSVfilter requires 6 values, got {}",
+                        arguments.join(" ")
+                    ));
+                }
+                let value = |index: usize| self.resolve(&arguments[index]);
+                events.push(VmEvent::SetHsvFilter(HsvFilter {
+                    hue: value(0),
+                    saturation: value(1),
+                    brightness: value(2),
+                    contrast: value(3),
+                    red: value(4),
+                    green: value(5),
+                    blue: 0,
+                }));
+            }
             CommandKind::Panel => {
                 if arguments.is_empty() {
                     return Err("panel requires at least a mode".into());
@@ -1147,6 +1208,18 @@ fn strip_resource_prefix(value: &str) -> String {
         .and_then(|rest| rest.find(']').map(|end| &rest[end + 1..]))
         .unwrap_or(value)
         .to_string()
+}
+
+fn parse_layer(arguments: &[String]) -> Result<LayerRequest, String> {
+    if arguments.is_empty() {
+        return Err("layer command requires at least one image".into());
+    }
+    let images = arguments
+        .iter()
+        .map(|argument| strip_resource_prefix(argument))
+        .filter(|name| name != "*" && !name.is_empty())
+        .collect();
+    Ok(LayerRequest { images })
 }
 
 fn parse_stage(arguments: &[String]) -> Result<StageRequest, String> {

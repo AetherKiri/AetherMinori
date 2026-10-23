@@ -1459,6 +1459,61 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
                         }
                         runtime.pending_stage = Some(request);
                     }
+                    VmEvent::SetScreen(request) => {
+                        let result = runtime
+                            .vfs
+                            .as_ref()
+                            .ok_or_else(|| "game VFS is not mounted".to_string())
+                            .and_then(|vfs| {
+                                runtime
+                                    .scene
+                                    .as_mut()
+                                    .ok_or_else(|| "scene system is not initialized".to_string())?
+                                    .apply_screen(vfs, &request.images)
+                            });
+                        if let Err(error) = result {
+                            return runtime.fail(error, INVALID_STATE);
+                        }
+                    }
+                    VmEvent::SetOverlay(request) => {
+                        let result = runtime
+                            .vfs
+                            .as_ref()
+                            .ok_or_else(|| "game VFS is not mounted".to_string())
+                            .and_then(|vfs| {
+                                runtime
+                                    .scene
+                                    .as_mut()
+                                    .ok_or_else(|| "scene system is not initialized".to_string())?
+                                    .apply_overlay(vfs, &request.images)
+                            });
+                        if let Err(error) = result {
+                            return runtime.fail(error, INVALID_STATE);
+                        }
+                    }
+                    VmEvent::SetFrameStills(images) => {
+                        let result = runtime
+                            .vfs
+                            .as_ref()
+                            .ok_or_else(|| "game VFS is not mounted".to_string())
+                            .and_then(|vfs| {
+                                runtime
+                                    .scene
+                                    .as_mut()
+                                    .ok_or_else(|| "scene system is not initialized".to_string())?
+                                    .apply_frame_stills(vfs, &images)
+                            });
+                        if let Err(error) = result {
+                            return runtime.fail(error, INVALID_STATE);
+                        }
+                    }
+                    VmEvent::SetHsvFilter(filter) => {
+                        if let Some(scene) = runtime.scene.as_mut()
+                            && let Err(error) = scene.apply_hsv_filter(filter)
+                        {
+                            return runtime.fail(error, INVALID_STATE);
+                        }
+                    }
                     VmEvent::ScriptChanged(_) => {}
                     VmEvent::PersistGlobals => {
                         // CommandChain ignores Variable::save's return value at

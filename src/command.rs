@@ -20,6 +20,10 @@ pub enum CommandKind {
     Pragma,
     Scroll,
     ScrollXf,
+    Screen,
+    Overlay,
+    Frame,
+    HsvFilter,
     Select,
     Set,
     SetGlobal,
@@ -59,6 +63,10 @@ impl CommandKind {
             "pragma" => Self::Pragma,
             "scroll" => Self::Scroll,
             "scrollXF" => Self::ScrollXf,
+            "screen" => Self::Screen,
+            "overlay" => Self::Overlay,
+            "frame" => Self::Frame,
+            "HSVfilter" => Self::HsvFilter,
             "select" => Self::Select,
             "set" => Self::Set,
             "setGlobal" => Self::SetGlobal,
@@ -93,6 +101,10 @@ impl CommandKind {
             Self::Pragma => "pragma",
             Self::Scroll => "scroll",
             Self::ScrollXf => "scrollXF",
+            Self::Screen => "screen",
+            Self::Overlay => "overlay",
+            Self::Frame => "frame",
+            Self::HsvFilter => "HSVfilter",
             Self::Select => "select",
             Self::Set => "set",
             Self::SetGlobal => "setGlobal",
@@ -186,6 +198,25 @@ impl CommandKind {
                 parse: 0x45D430,
                 execute: 0x45D800,
             },
+            // ef-era handlers, recovered from the string references at
+            // 0x4cb941 (.HSVfilter), 0x4cbab4 (.overlay), 0x4cbb59 (.screen)
+            // and 0x4cc09e (.frame).
+            Self::Screen => OriginalHandler {
+                parse: 0x4E91E0,
+                execute: 0x4E7ED0,
+            },
+            Self::Overlay => OriginalHandler {
+                parse: 0x4EBC10,
+                execute: 0x4E7ED0,
+            },
+            Self::Frame => OriginalHandler {
+                parse: 0x4EE0C0,
+                execute: 0x4E8EF0,
+            },
+            Self::HsvFilter => OriginalHandler {
+                parse: 0x4ECC00,
+                execute: 0x4E84B0,
+            },
             Self::Select => OriginalHandler {
                 parse: 0x45DAD0,
                 execute: 0x45DBF0,
@@ -222,7 +253,7 @@ impl CommandKind {
     }
 }
 
-pub const GAME_COMMANDS: [CommandKind; 28] = [
+pub const GAME_COMMANDS: [CommandKind; 32] = [
     CommandKind::Chain,
     CommandKind::Char,
     CommandKind::Effect,
@@ -243,6 +274,10 @@ pub const GAME_COMMANDS: [CommandKind; 28] = [
     CommandKind::Pragma,
     CommandKind::Scroll,
     CommandKind::ScrollXf,
+    CommandKind::Screen,
+    CommandKind::Overlay,
+    CommandKind::Frame,
+    CommandKind::HsvFilter,
     CommandKind::Select,
     CommandKind::Set,
     CommandKind::SetGlobal,
@@ -259,7 +294,7 @@ mod tests {
 
     #[test]
     fn registry_is_complete_and_round_trips() {
-        assert_eq!(GAME_COMMANDS.len(), 28);
+        assert_eq!(GAME_COMMANDS.len(), 32);
         for command in GAME_COMMANDS {
             assert_eq!(CommandKind::from_name(command.name()), Some(command));
             assert_ne!(command.original_handler().parse, 0);

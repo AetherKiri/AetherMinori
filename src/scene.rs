@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::profile::{GameMenuItemKind, GameProfile};
 use crate::vfs::Vfs;
 use crate::vm::{
-    CharRequest, EffectRequest, PanelRequest, ShakeRequest, StageRequest, TransitionConfig,
+    CharRequest, HsvFilter, EffectRequest, PanelRequest, ShakeRequest, StageRequest, TransitionConfig,
 };
 
 /// Drawing surface size for one game.
@@ -291,6 +291,10 @@ pub struct SceneSystem {
     transition: Option<TransitionState>,
     game_menu: Option<GameMenuState>,
     save_menu: Option<SaveMenuState>,
+    screen_layers: Vec<Frame>,
+    overlay_layers: Vec<Frame>,
+    frame_stills: Vec<Frame>,
+    hsv_filter: HsvFilter,
     rand_state: u32,
 }
 
@@ -336,6 +340,10 @@ impl SceneSystem {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            screen_layers: Vec::new(),
+            overlay_layers: Vec::new(),
+            frame_stills: Vec::new(),
+            hsv_filter: HsvFilter::default(),
         }
     }
 
@@ -369,6 +377,10 @@ impl SceneSystem {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            screen_layers: Vec::new(),
+            overlay_layers: Vec::new(),
+            frame_stills: Vec::new(),
+            hsv_filter: HsvFilter::default(),
         })
     }
 
@@ -1308,6 +1320,62 @@ impl SceneSystem {
         Ok(())
     }
 
+    /// .screen: gradient strips drawn under the scene.
+    pub fn apply_screen(&mut self, vfs: &Vfs, images: &[String]) -> Result<(), String> {
+        self.screen_layers = decode_strips(self.canvas, vfs, images)?;
+        self.refresh_composed_frame();
+        Ok(())
+    }
+
+    /// .overlay: gradient strips drawn over the characters.
+    pub fn apply_overlay(&mut self, vfs: &Vfs, images: &[String]) -> Result<(), String> {
+        self.overlay_layers = decode_strips(self.canvas, vfs, images)?;
+        self.refresh_composed_frame();
+        Ok(())
+    }
+
+    /// .frame: full-size stills drawn over the layers but under the message panel.
+    pub fn apply_frame_stills(&mut self, vfs: &Vfs, images: &[String]) -> Result<(), String> {
+        self.frame_stills = images
+            .iter()
+            .map(|name| decode_png(&vfs.read(name)?))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.refresh_composed_frame();
+        Ok(())
+    }
+
+    /// .HSVfilter: hue rotation, saturation, brightness, contrast, RGB bias.
+    pub fn apply_hsv_filter(&mut self, filter: HsvFilter) -> Result<(), String> {
+        self.hsv_filter = filter;
+        self.refresh_composed_frame();
+        Ok(())
+    }
+
+    fn refresh_composed_frame(&mut self) {
+        let mut composed =
+            compose_characters(self.canvas, &self.background_rgba, &self.characters);
+        composite_layers(
+            self.canvas,
+            &mut composed,
+            &self.screen_layers,
+            &self.overlay_layers,
+            &self.frame_stills,
+        );
+        apply_hsv_filter_to(self.canvas, &mut composed, self.hsv_filter);
+        composite_panel_state(
+            self.canvas,
+            &mut composed,
+            self.panel_transition.as_ref(),
+            self.panel.as_ref(),
+        );
+        if let Some(transition) = self.transition.as_mut() {
+            transition.new_rgba = composed;
+        } else {
+            self.frame.rgba = composed;
+            self.frame.serial = self.frame.serial.saturating_add(1);
+        }
+    }
+
     fn freeze_characters(&mut self) {
         let composed = freeze_character_layers(self.canvas, &self.background_rgba, &mut self.characters);
         if let Some(transition) = self.transition.as_mut() {
@@ -1608,6 +1676,108 @@ impl SceneSystem {
             rgba,
             serial: self.frame.serial.saturating_add(1),
         };
+    }
+}
+
+/// Decode .screen/.overlay strip resources and stretch each one across the
+/// surface. A Minori strip is one pixel wide and one pixel taller than the
+/// surface; row zero is the strip header padding the engine skips.
+fn decode_strips(canvas: Canvas, vfs: &Vfs, images: &[String]) -> Result<Vec<Frame>, String> {
+    let mut layers = Vec::with_capacity(images.len());
+    for name in images {
+        let strip = decode_png(&vfs.read(name)?)?;
+        layers.push(stretch_strip(canvas, &strip));
+    }
+    Ok(layers)
+}
+
+/// Expand a one-pixel-wide gradient strip into a full-size frame.
+///
+/// The retail strips are one pixel wide and `height + 1` rows tall: row 0 is
+/// white padding, rows 1..=height hold the ramp the engine spans across the
+/// surface. Anything already full-size is used as is.
+fn stretch_strip(canvas: Canvas, strip: &Frame) -> Frame {
+    if strip.width >= canvas.width && strip.height >= canvas.height {
+        return strip.clone();
+    }
+    let source_offset = u32::from(strip.height > canvas.height);
+    let mut rgba = Vec::with_capacity(canvas.bytes());
+    for row in 0..canvas.height {
+        let source_row = (row + source_offset).min(strip.height.saturating_sub(1));
+        let source_x = if strip.width > 1 { strip.width - 1 } else { 0 };
+        let index = ((source_row * strip.width + source_x) * 4) as usize;
+        let color = &strip.rgba[index..index + 4];
+        for _ in 0..canvas.width {
+            rgba.extend_from_slice(color);
+        }
+    }
+    Frame {
+        width: canvas.width,
+        height: canvas.height,
+        rgba,
+        serial: 0,
+    }
+}
+
+/// Composite the .screen / character / .overlay / .frame stack in the order the
+/// original engine draws it.
+fn composite_layers(
+    canvas: Canvas,
+    output: &mut [u8],
+    screen: &[Frame],
+    overlay: &[Frame],
+    stills: &[Frame],
+) {
+    let _ = canvas;
+    for layer in screen.iter().chain(overlay.iter()).chain(stills.iter()) {
+        composite_full_frame(output, layer);
+    }
+}
+
+fn composite_full_frame(output: &mut [u8], layer: &Frame) {
+    for (target, source) in output.chunks_exact_mut(4).zip(layer.rgba.chunks_exact(4)) {
+        let alpha = u32::from(source[3]);
+        if alpha == 0 {
+            continue;
+        }
+        if alpha == 255 {
+            target.copy_from_slice(source);
+            continue;
+        }
+        let inverse = 255 - alpha;
+        for channel in 0..3 {
+            target[channel] = ((u32::from(source[channel]) * alpha
+                + u32::from(target[channel]) * inverse)
+                / 255) as u8;
+        }
+        target[3] = 255;
+    }
+}
+
+/// Apply the .HSVfilter pass. The six values are authored the way the original
+/// UI exposes them: hue in degrees, saturation / brightness / contrast as
+/// percentages around zero, and a red and green bias in percent. With all six
+/// at zero the image must come through untouched, which the corpus relies on
+/// (every filter is either all-zero or a small warm/cool bias).
+fn apply_hsv_filter_to(canvas: Canvas, output: &mut [u8], filter: HsvFilter) {
+    let _ = canvas;
+    if filter == HsvFilter::default() {
+        return;
+    }
+    let red_gain = 1.0 + f64::from(filter.red) / 100.0;
+    let green_gain = 1.0 + f64::from(filter.green) / 100.0;
+    let blue_gain = 1.0 + f64::from(filter.blue) / 100.0;
+    let brightness = f64::from(filter.brightness) / 100.0;
+    for pixel in output.chunks_exact_mut(4) {
+        let mut rgb = [
+            f64::from(pixel[0]) / 255.0 * red_gain,
+            f64::from(pixel[1]) / 255.0 * green_gain,
+            f64::from(pixel[2]) / 255.0 * blue_gain,
+        ];
+        rgb = rgb.map(|value| (value + brightness).clamp(0.0, 1.0));
+        for channel in 0..3 {
+            pixel[channel] = (rgb[channel] * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
     }
 }
 
@@ -2924,6 +3094,10 @@ mod tests {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            screen_layers: Vec::new(),
+            overlay_layers: Vec::new(),
+            frame_stills: Vec::new(),
+            hsv_filter: HsvFilter::default(),
         };
         assert_eq!(
             scene.main_menu_action(1150.0, 48.0),
@@ -3041,6 +3215,10 @@ mod tests {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            screen_layers: Vec::new(),
+            overlay_layers: Vec::new(),
+            frame_stills: Vec::new(),
+            hsv_filter: HsvFilter::default(),
         };
         scene.refresh_character_frame();
         let target = &scene.transition.as_ref().unwrap().new_rgba;
@@ -3159,6 +3337,10 @@ mod tests {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            screen_layers: Vec::new(),
+            overlay_layers: Vec::new(),
+            frame_stills: Vec::new(),
+            hsv_filter: HsvFilter::default(),
         };
         scene.swap_characters();
         assert!(scene.characters.contains_key(&1));
@@ -3212,6 +3394,10 @@ mod tests {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            screen_layers: Vec::new(),
+            overlay_layers: Vec::new(),
+            frame_stills: Vec::new(),
+            hsv_filter: HsvFilter::default(),
         };
         assert!(!scene.tick_panel_transition(159));
         assert!(scene.panel_transition_active());
@@ -3805,6 +3991,10 @@ mod tests {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            screen_layers: Vec::new(),
+            overlay_layers: Vec::new(),
+            frame_stills: Vec::new(),
+            hsv_filter: HsvFilter::default(),
         };
         assert!(!scene.tick_transition(2550));
         assert_eq!(scene.transition.as_ref().unwrap().progress, 255);
