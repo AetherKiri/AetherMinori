@@ -478,6 +478,7 @@ impl Runtime {
             let icon = self
                 .profile
                 .ok_or("message icon requires a game profile")?
+                .ui
                 .message_wait;
             let data = self
                 .vfs
@@ -528,6 +529,7 @@ impl Runtime {
         let wait = self
             .profile
             .ok_or("message icon requires a game profile")?
+            .ui
             .message_wait;
         let argument = safe_cstring(&format!(
             "message_wait\t{}\t{}\t{}\t{}\t{}\t{}",
@@ -590,6 +592,7 @@ impl Runtime {
         let layout = &self
             .profile
             .ok_or("save slot labels require a game profile")?
+            .ui
             .save_load;
         let value = slots
             .iter()
@@ -992,7 +995,15 @@ unsafe extern "C" fn open_game(opaque: *mut c_void, root: *const c_char, _: *con
         .ok_or_else(|| "no Minori game profile matches this installation".to_string())
         .and_then(|profile| {
             let vfs = Vfs::mount_game_with_profile(root_path, profile)?;
-            let scene = SceneSystem::main_menu(&vfs, profile)?;
+            // Games with an in-engine title screen open on it. ef draws its title
+            // in native code, so its profile has none and the runtime goes
+            // straight to the script -- but the scene still has to exist, so it
+            // is built as an empty script scene.
+            let scene = if profile.has_title_screen() {
+                SceneSystem::main_menu(&vfs, profile)?
+            } else {
+                SceneSystem::script_only(profile)
+            };
             Ok((profile, vfs, scene))
         });
     match result {
@@ -1028,6 +1039,13 @@ unsafe extern "C" fn open_game(opaque: *mut c_void, root: *const c_char, _: *con
             runtime.scene = Some(scene);
             runtime.delivered_serial = 0;
             runtime.failed = false;
+            if !profile.has_title_screen() {
+                // No title screen: opening the game starts the story.
+                return match start_new_game(runtime) {
+                    Ok(()) => OK,
+                    Err(error) => runtime.fail(error, INVALID_STATE),
+                };
+            }
             OK
         }
         Err(error) => runtime.fail(error, IO_ERROR),

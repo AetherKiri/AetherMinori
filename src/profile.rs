@@ -59,7 +59,7 @@ impl ArchiveProfile {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct LogicalRect {
     pub left: f64,
     pub top: f64,
@@ -130,23 +130,48 @@ pub struct MessageWaitProfile {
     pub y: f64,
 }
 
+/// The in-engine main menu, when the game has one.
+///
+/// Only the games whose title screen is drawn by the runtime itself carry this.
+/// ef draws its title screen in native code and has none in the script corpus,
+/// so its profile leaves this as `None` and the game starts straight away --
+/// the host's own library UI is the launcher.
 #[derive(Debug)]
-pub struct GameProfile {
-    pub id: &'static str,
-    pub archive: &'static ArchiveProfile,
-    pub entry_script: &'static str,
-    pub title_background: &'static str,
-    pub title_new_game: LogicalRect,
-    pub title_load_game: LogicalRect,
+pub struct TitleProfile {
+    pub background: &'static str,
+    pub new_game: LogicalRect,
+    pub load_game: LogicalRect,
+}
+
+/// Everything the runtime draws or lays out on the game's behalf.
+///
+/// This is the part that used to be duplicated between game profiles even when
+/// the two games shared the same artwork and geometry.
+#[derive(Debug)]
+pub struct UiProfile {
+    pub title: Option<TitleProfile>,
     pub message_panel: &'static str,
     pub message_wait: MessageWaitProfile,
     pub game_menu: GameMenuProfile,
     pub save_load: SaveLoadProfile,
 }
 
+#[derive(Debug)]
+pub struct GameProfile {
+    pub id: &'static str,
+    pub archive: &'static ArchiveProfile,
+    pub entry_script: &'static str,
+    pub ui: UiProfile,
+}
+
 impl GameProfile {
     pub fn matches_root(&self, root: &Path) -> bool {
         self.archive.matches_root(root)
+    }
+
+    /// True when the runtime owns the title screen and must show it first.
+    pub fn has_title_screen(&self) -> bool {
+        self.ui.title.is_some()
     }
 }
 
@@ -331,66 +356,70 @@ pub static TRINOLINE_PROFILE: GameProfile = GameProfile {
     id: "trinoline",
     archive: &TRINOLINE_ARCHIVE_PROFILE,
     entry_script: "test.sc",
-    title_background: "topmenu\\TopMenu.png",
-    title_new_game: LogicalRect {
-        left: 260.0,
-        top: 220.0,
-        right: 400.0,
-        bottom: 280.0,
-    },
-    title_load_game: LogicalRect {
-        left: 420.0,
-        top: 220.0,
-        right: 510.0,
-        bottom: 280.0,
-    },
-    message_panel: "msgPanel.png",
-    message_wait: MessageWaitProfile {
-        resource: "pauseAnimeNextPage.png",
-        frames: 9,
-        interval_ms: 100,
-        x: 1138.0,
-        y: 674.0,
-    },
-    game_menu: GameMenuProfile {
-        background: "gameMenuBack.png",
-        right_margin: 6,
-        bottom_margin: 15,
-        trigger_size: 96.0,
-        items: SUPIPARA_GAME_MENU_ITEMS,
-    },
-    save_load: SaveLoadProfile {
-        base: "saveload\\saveDefaultBackground.png",
-        save_heading: "saveload\\saveText.png",
-        load_heading: "saveload\\loadText.png",
-        page_resource: "saveload\\page01.png",
-        page_x: 0,
-        page_y: 0,
-        left_column: LogicalRect {
-            left: 0.0,
-            top: 0.0,
-            right: 640.0,
-            bottom: 720.0,
+    ui: UiProfile {
+        title: Some(TitleProfile {
+            background: "topmenu\\TopMenu.png",
+            new_game: LogicalRect {
+                left: 260.0,
+                top: 220.0,
+                right: 400.0,
+                bottom: 280.0,
+            },
+            load_game: LogicalRect {
+                left: 420.0,
+                top: 220.0,
+                right: 510.0,
+                bottom: 280.0,
+            },
+        }),
+        message_panel: "msgPanel.png",
+        message_wait: MessageWaitProfile {
+            resource: "pauseAnimeNextPage.png",
+            frames: 9,
+            interval_ms: 100,
+            x: 1138.0,
+            y: 674.0,
         },
-        right_column: LogicalRect {
-            left: 640.0,
-            top: 0.0,
-            right: 1280.0,
-            bottom: 720.0,
+        game_menu: GameMenuProfile {
+            background: "gameMenuBack.png",
+            right_margin: 6,
+            bottom_margin: 15,
+            trigger_size: 96.0,
+            items: SUPIPARA_GAME_MENU_ITEMS,
         },
-        first_row_top: 81.0,
-        row_height: 96.0,
-        row_step: 108.0,
-        close: LogicalRect {
-            left: 1080.0,
-            top: 0.0,
-            right: 1280.0,
-            bottom: 80.0,
+        save_load: SaveLoadProfile {
+            base: "saveload\\saveDefaultBackground.png",
+            save_heading: "saveload\\saveText.png",
+            load_heading: "saveload\\loadText.png",
+            page_resource: "saveload\\page01.png",
+            page_x: 0,
+            page_y: 0,
+            left_column: LogicalRect {
+                left: 0.0,
+                top: 0.0,
+                right: 640.0,
+                bottom: 720.0,
+            },
+            right_column: LogicalRect {
+                left: 640.0,
+                top: 0.0,
+                right: 1280.0,
+                bottom: 720.0,
+            },
+            first_row_top: 81.0,
+            row_height: 96.0,
+            row_step: 108.0,
+            close: LogicalRect {
+                left: 1080.0,
+                top: 0.0,
+                right: 1280.0,
+                bottom: 80.0,
+            },
+            thumbnail_width: 160,
+            thumbnail_height: 90,
+            thumbnail_left: [68, 459],
+            thumbnail_top: 84,
         },
-        thumbnail_width: 160,
-        thumbnail_height: 90,
-        thumbnail_left: [68, 459],
-        thumbnail_top: 84,
     },
 };
 
@@ -398,66 +427,70 @@ pub static SUPIPARA_PROFILE: GameProfile = GameProfile {
     id: "supipara-story-01",
     archive: &SUPIPARA_ARCHIVE_PROFILE,
     entry_script: "test.sc",
-    title_background: "topMenu1.png",
-    title_new_game: LogicalRect {
-        left: 1056.0,
-        top: 32.0,
-        right: 1280.0,
-        bottom: 64.0,
-    },
-    title_load_game: LogicalRect {
-        left: 1056.0,
-        top: 76.0,
-        right: 1280.0,
-        bottom: 112.0,
-    },
-    message_panel: "msgPanel.png",
-    message_wait: MessageWaitProfile {
-        resource: "pauseAnimeNextPage.png",
-        frames: 9,
-        interval_ms: 100,
-        x: 1138.0,
-        y: 674.0,
-    },
-    game_menu: GameMenuProfile {
-        background: "gameMenuBack.png",
-        right_margin: 6,
-        bottom_margin: 15,
-        trigger_size: 96.0,
-        items: SUPIPARA_GAME_MENU_ITEMS,
-    },
-    save_load: SaveLoadProfile {
-        base: "saveloadBase.png",
-        save_heading: "saveloadSave.png",
-        load_heading: "saveloadLoad.png",
-        page_resource: "saveload_Page1.png",
-        page_x: 1072,
-        page_y: 0,
-        left_column: LogicalRect {
-            left: 65.0,
-            top: 0.0,
-            right: 408.0,
-            bottom: 720.0,
+    ui: UiProfile {
+        title: Some(TitleProfile {
+            background: "topMenu1.png",
+            new_game: LogicalRect {
+                left: 1056.0,
+                top: 32.0,
+                right: 1280.0,
+                bottom: 64.0,
+            },
+            load_game: LogicalRect {
+                left: 1056.0,
+                top: 76.0,
+                right: 1280.0,
+                bottom: 112.0,
+            },
+        }),
+        message_panel: "msgPanel.png",
+        message_wait: MessageWaitProfile {
+            resource: "pauseAnimeNextPage.png",
+            frames: 9,
+            interval_ms: 100,
+            x: 1138.0,
+            y: 674.0,
         },
-        right_column: LogicalRect {
-            left: 456.0,
-            top: 0.0,
-            right: 800.0,
-            bottom: 720.0,
+        game_menu: GameMenuProfile {
+            background: "gameMenuBack.png",
+            right_margin: 6,
+            bottom_margin: 15,
+            trigger_size: 96.0,
+            items: SUPIPARA_GAME_MENU_ITEMS,
         },
-        first_row_top: 81.0,
-        row_height: 96.0,
-        row_step: 108.0,
-        close: LogicalRect {
-            left: 1080.0,
-            top: 0.0,
-            right: 1280.0,
-            bottom: 80.0,
+        save_load: SaveLoadProfile {
+            base: "saveloadBase.png",
+            save_heading: "saveloadSave.png",
+            load_heading: "saveloadLoad.png",
+            page_resource: "saveload_Page1.png",
+            page_x: 1072,
+            page_y: 0,
+            left_column: LogicalRect {
+                left: 65.0,
+                top: 0.0,
+                right: 408.0,
+                bottom: 720.0,
+            },
+            right_column: LogicalRect {
+                left: 456.0,
+                top: 0.0,
+                right: 800.0,
+                bottom: 720.0,
+            },
+            first_row_top: 81.0,
+            row_height: 96.0,
+            row_step: 108.0,
+            close: LogicalRect {
+                left: 1080.0,
+                top: 0.0,
+                right: 1280.0,
+                bottom: 80.0,
+            },
+            thumbnail_width: 160,
+            thumbnail_height: 90,
+            thumbnail_left: [68, 459],
+            thumbnail_top: 84,
         },
-        thumbnail_width: 160,
-        thumbnail_height: 90,
-        thumbnail_left: [68, 459],
-        thumbnail_top: 84,
     },
 };
 
@@ -480,11 +513,21 @@ mod tests {
     #[test]
     fn supipara_profile_keeps_work_specific_resources_out_of_the_core() {
         assert_eq!(SUPIPARA_PROFILE.entry_script, "test.sc");
-        assert!(SUPIPARA_PROFILE.title_new_game.contains(1100.0, 48.0));
-        assert!(SUPIPARA_PROFILE.title_load_game.contains(1100.0, 96.0));
-        assert_eq!(SUPIPARA_PROFILE.game_menu.items.len(), 5);
+        let title = SUPIPARA_PROFILE.ui.title.as_ref().unwrap();
+        assert!(title.new_game.contains(1100.0, 48.0));
+        assert!(title.load_game.contains(1100.0, 96.0));
+        assert_eq!(SUPIPARA_PROFILE.ui.game_menu.items.len(), 5);
         assert_eq!(SUPIPARA_PROFILE.archive.archive_keys.len(), 8);
         assert!(SUPIPARA_PROFILE.archive.archive_key("voice").is_some());
+    }
+
+    #[test]
+    fn ef_profile_has_no_in_engine_title_screen() {
+        assert_eq!(EF_ARCHIVE_PROFILE.archive_keys.len(), 4);
+        assert_eq!(EF_ARCHIVE_PROFILE.password_scheme, TypePasswordScheme::PerArchive);
+        assert_eq!(EF_ARCHIVE_PROFILE.rc4_skip, Rc4SkipScheme::None);
+        assert_eq!(EF_ARCHIVE_PROFILE.type_passwords.sc, "102ycz1s");
+        assert!(EF_ARCHIVE_PROFILE.archive_key("sys").is_some());
     }
 
     #[test]

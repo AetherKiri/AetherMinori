@@ -265,9 +265,56 @@ pub struct SceneSystem {
     rand_state: u32,
 }
 
+
+fn black_rgba() -> Vec<u8> {
+    [0, 0, 0, 255].repeat((WIDTH * HEIGHT) as usize)
+}
+
+fn black_frame() -> Frame {
+    Frame {
+        width: WIDTH,
+        height: HEIGHT,
+        rgba: black_rgba(),
+        serial: 0,
+    }
+}
+
 impl SceneSystem {
+    /// A script scene with no artwork yet, for games whose title screen lives
+    /// outside the runtime. The first .stage call replaces it.
+    pub fn script_only(profile: &'static GameProfile) -> Self {
+        let frame = black_frame();
+        Self {
+            profile,
+            current: SceneKind::Script,
+            background_source: frame.clone(),
+            background_rgba: frame.rgba.clone(),
+            camera_x: 0,
+            camera_y: 0,
+            scroll: None,
+            shake: None,
+            effect_layers: None,
+            wscroll: None,
+            cutin: None,
+            frame,
+            characters: HashMap::new(),
+            panel: None,
+            panel_transition: None,
+            message_char_transitions: Vec::new(),
+            transition: None,
+            game_menu: None,
+            save_menu: None,
+            rand_state: 1,
+        }
+    }
+
     pub fn main_menu(vfs: &Vfs, profile: &'static GameProfile) -> Result<Self, String> {
-        let data = vfs.read(profile.title_background)?;
+        let title = profile
+            .ui
+            .title
+            .as_ref()
+            .ok_or("this game profile has no in-engine title screen")?;
+        let data = vfs.read(title.background)?;
         let frame = decode_png(&data)?;
         Ok(Self {
             profile,
@@ -295,7 +342,7 @@ impl SceneSystem {
 
     pub fn enter_script_scene(&mut self) {
         let serial = self.frame.serial.saturating_add(1);
-        let black = [0, 0, 0, 255].repeat((WIDTH * HEIGHT) as usize);
+        let black = black_rgba();
         self.current = SceneKind::Script;
         self.frame = Frame {
             width: WIDTH,
@@ -380,9 +427,12 @@ impl SceneSystem {
         if self.current != SceneKind::MainMenu {
             return None;
         }
-        if self.profile.title_new_game.contains(x, y) {
+        let Some(title) = self.profile.ui.title.as_ref() else {
+            return None;
+        };
+        if title.new_game.contains(x, y) {
             Some(MainMenuAction::NewGame)
-        } else if self.profile.title_load_game.contains(x, y) {
+        } else if title.load_game.contains(x, y) {
             Some(MainMenuAction::LoadGame)
         } else {
             None
@@ -408,7 +458,7 @@ impl SceneSystem {
                 };
                 return Ok(Some(action));
             }
-            if self.profile.save_load.close.contains(x, y)
+            if self.profile.ui.save_load.close.contains(x, y)
                 && let Some(state) = self.save_menu.take()
             {
                 self.frame.rgba = state.underlay;
@@ -420,7 +470,7 @@ impl SceneSystem {
             return Ok(None);
         }
         if self.game_menu.is_none() {
-            let trigger = self.profile.game_menu.trigger_size;
+            let trigger = self.profile.ui.game_menu.trigger_size;
             if (f64::from(WIDTH) - trigger..f64::from(WIDTH)).contains(&x)
                 && (f64::from(HEIGHT) - trigger..f64::from(HEIGHT)).contains(&y)
             {
@@ -446,7 +496,7 @@ impl SceneSystem {
             if *slot >= 10 || frame.width == 0 || frame.height == 0 {
                 continue;
             }
-            let layout = &self.profile.save_load;
+            let layout = &self.profile.ui.save_load;
             let thumbnail = resize_nearest(frame, layout.thumbnail_width, layout.thumbnail_height);
             let row = i32::from(*slot % 5);
             let column = usize::from(*slot >= 5);
@@ -586,7 +636,7 @@ impl SceneSystem {
 
     fn open_save_load_menu(&mut self, vfs: &Vfs, load: bool) -> Result<(), String> {
         let underlay = self.frame.rgba.clone();
-        let layout = &self.profile.save_load;
+        let layout = &self.profile.ui.save_load;
         self.frame = decode_png(&vfs.read(layout.base)?)?;
         let heading = if load {
             layout.load_heading
@@ -607,7 +657,7 @@ impl SceneSystem {
 
     fn open_game_menu(&mut self, vfs: &Vfs) -> Result<(), String> {
         let underlay = self.frame.rgba.clone();
-        let menu = &self.profile.game_menu;
+        let menu = &self.profile.ui.game_menu;
         let back = decode_png(&vfs.read(menu.background)?)?;
         let left = WIDTH as i32 - back.width as i32 - menu.right_margin;
         let top = HEIGHT as i32 - back.height as i32 - menu.bottom_margin;
@@ -1016,7 +1066,7 @@ impl SceneSystem {
             0 | 7 => None,
             1 | 2 => {
                 let name = if request.image.is_empty() {
-                    self.profile.message_panel
+                    self.profile.ui.message_panel
                 } else {
                     &request.image
                 };
@@ -2259,7 +2309,7 @@ fn fill_transition_rect(
 }
 
 fn save_slot_hit(profile: &GameProfile, x: f64, y: f64) -> Option<u8> {
-    let layout = &profile.save_load;
+    let layout = &profile.ui.save_load;
     for row in 0..5_u8 {
         let top = layout.first_row_top + f64::from(row) * layout.row_step;
         if (top..top + layout.row_height).contains(&y) {
@@ -2283,7 +2333,7 @@ fn game_menu_hit(
 ) -> Option<GameMenuAction> {
     let local_x = x - f64::from(left);
     let local_y = y - f64::from(top);
-    for item in profile.game_menu.items {
+    for item in profile.ui.game_menu.items {
         if (f64::from(item.x)..f64::from(item.x) + item.width).contains(&local_x)
             && (f64::from(item.y)..f64::from(item.y) + item.height).contains(&local_y)
         {
@@ -2872,7 +2922,7 @@ mod tests {
 
     #[test]
     fn active_panel_is_preserved_in_scene_transition_targets() {
-        let black = [0, 0, 0, 255].repeat((WIDTH * HEIGHT) as usize);
+        let black = black_rgba();
         let panel = Frame {
             width: 1,
             height: 65,
