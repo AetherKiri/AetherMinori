@@ -503,6 +503,67 @@ pub static SUPIPARA_PROFILE: GameProfile = GameProfile {
     },
 };
 
+/// ef - the first title, at its native 800x600.
+pub static EF_PROFILE: GameProfile = GameProfile {
+    id: "ef-first-tale",
+    archive: &EF_ARCHIVE_PROFILE,
+    entry_script: "test.sc",
+    canvas: crate::scene::Canvas::new(800, 600),
+    ui: UiProfile {
+        // The retail title screen is drawn by native code and the script
+        // corpus has no title script, so the runtime does not own one.
+        title: None,
+        message_panel: "msgPanel.png",
+        message_wait: MessageWaitProfile {
+            resource: "pauseAnimeNextPage.png",
+            frames: 9,
+            interval_ms: 100,
+            x: 780.0,
+            y: 574.0,
+        },
+        game_menu: GameMenuProfile {
+            background: "gameMenuBack.png",
+            right_margin: 6,
+            bottom_margin: 15,
+            trigger_size: 96.0,
+            items: SUPIPARA_GAME_MENU_ITEMS,
+        },
+        save_load: SaveLoadProfile {
+            base: "saveloadBase.png",
+            save_heading: "saveloadSave.png",
+            load_heading: "saveloadLoad.png",
+            page_resource: "saveload_Page1.png",
+            page_x: 700,
+            page_y: 0,
+            left_column: LogicalRect {
+                left: 40.0,
+                top: 0.0,
+                right: 400.0,
+                bottom: 600.0,
+            },
+            right_column: LogicalRect {
+                left: 410.0,
+                top: 0.0,
+                right: 760.0,
+                bottom: 600.0,
+            },
+            first_row_top: 66.0,
+            row_height: 80.0,
+            row_step: 90.0,
+            close: LogicalRect {
+                left: 700.0,
+                top: 0.0,
+                right: 800.0,
+                bottom: 64.0,
+            },
+            thumbnail_width: 160,
+            thumbnail_height: 120,
+            thumbnail_left: [44, 414],
+            thumbnail_top: 70,
+        },
+    },
+};
+
 pub fn detect_archive_profile(root: &Path) -> Option<&'static ArchiveProfile> {
     [&SUPIPARA_ARCHIVE_PROFILE, &TRINOLINE_ARCHIVE_PROFILE, &EF_ARCHIVE_PROFILE]
         .into_iter()
@@ -510,7 +571,7 @@ pub fn detect_archive_profile(root: &Path) -> Option<&'static ArchiveProfile> {
 }
 
 pub fn detect_game_profile(root: &Path) -> Option<&'static GameProfile> {
-    [&SUPIPARA_PROFILE, &TRINOLINE_PROFILE]
+    [&SUPIPARA_PROFILE, &TRINOLINE_PROFILE, &EF_PROFILE]
         .into_iter()
         .find(|profile| profile.matches_root(root))
 }
