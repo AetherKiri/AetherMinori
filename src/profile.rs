@@ -15,12 +15,33 @@ pub struct TypePasswordProfile {
     pub avi: &'static str,
 }
 
+/// Where a game keeps its type passwords.
+///
+/// Supipara and Trinoline pick the password from the entry extension; ef uses a
+/// single per-archive password for every encrypted (unpacked) entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypePasswordScheme {
+    PerExtension,
+    PerArchive,
+}
+
 #[derive(Debug)]
 pub struct ArchiveProfile {
     pub id: &'static str,
     pub executable_markers: &'static [&'static str],
     pub archive_keys: &'static [ArchiveKeyProfile],
     pub type_passwords: TypePasswordProfile,
+    pub password_scheme: TypePasswordScheme,
+    pub rc4_skip: Rc4SkipScheme,
+}
+
+/// How many RC4 keystream bytes to discard before the first payload byte.
+///
+/// Supipara/Trinoline discard (crc32(key) >> 12) & 0xFF; ef starts at zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rc4SkipScheme {
+    Crc32,
+    None,
 }
 
 impl ArchiveProfile {
@@ -129,6 +150,26 @@ impl GameProfile {
     }
 }
 
+const EF_ARCHIVE_KEYS: &[ArchiveKeyProfile] = &[
+    ArchiveKeyProfile { archive: "scr", index: "72634E755D2C980B205F82828BDE4379F37BD2B66D4390B6436A4D9F8389CA5A", data: Some("B7D2955CF7A0D3ECC20CCBF887A8C1B6D498ECF5F9B8361E897E4DBC7BAD1465") },
+    ArchiveKeyProfile { archive: "bg",  index: "8C7919517E51A0FD8348DC85CB68858E68905BD7D5B96336EA3699C15B683F83", data: Some("CA3C7817E1C631E5F88DE7AFF702A3697CB9D5E337E54EDA45546C2910C75FDE") },
+    ArchiveKeyProfile { archive: "st",  index: "B891BB7B469812FE98CC267BF1356131C694D340D79D8CD10DB45C5D81C44A9C", data: Some("630BDF10C9E57EF99126B50476F59800240CD1B3766A1416E31EBFEE27694F93") },
+    ArchiveKeyProfile { archive: "sys", index: "0112C9880D9DD23A0573BAC209226D0E80A8AE1EF8B33A76494962531BD1110B", data: Some("FD399525E2B2762FF9BC115DD145F6EB9E6DE3574574D04BCD21146BE6537951") },
+];
+
+pub static EF_ARCHIVE_PROFILE: ArchiveProfile = ArchiveProfile {
+    id: "ef-first-tale",
+    executable_markers: &["ef_first_AA.exe", "ef_first_cn_AA.dll", "ef_first_en_AA.chm"],
+    archive_keys: EF_ARCHIVE_KEYS,
+    type_passwords: TypePasswordProfile {
+        png: "a7b77qgx",
+        ogg: "a7b77qgx",
+        sc: "102ycz1s",
+        avi: "a7b77qgx",
+    },
+    password_scheme: TypePasswordScheme::PerArchive,
+    rc4_skip: Rc4SkipScheme::None,
+};
 const SUPIPARA_ARCHIVE_KEYS: &[ArchiveKeyProfile] = &[
     ArchiveKeyProfile {
         archive: "sys",
@@ -182,6 +223,8 @@ pub static SUPIPARA_ARCHIVE_PROFILE: ArchiveProfile = ArchiveProfile {
         sc: "gTcL74ch",
         avi: "hYPH3Fxw",
     },
+    password_scheme: TypePasswordScheme::PerExtension,
+    rc4_skip: Rc4SkipScheme::Crc32,
 };
 
 const TRINOLINE_ARCHIVE_KEYS: &[ArchiveKeyProfile] = &[
@@ -237,6 +280,8 @@ pub static TRINOLINE_ARCHIVE_PROFILE: ArchiveProfile = ArchiveProfile {
         sc: "z3Mw9x2r",
         avi: "8n4DgsEb",
     },
+    password_scheme: TypePasswordScheme::PerExtension,
+    rc4_skip: Rc4SkipScheme::Crc32,
 };
 
 const SUPIPARA_GAME_MENU_ITEMS: &[GameMenuItemProfile] = &[
@@ -417,7 +462,7 @@ pub static SUPIPARA_PROFILE: GameProfile = GameProfile {
 };
 
 pub fn detect_archive_profile(root: &Path) -> Option<&'static ArchiveProfile> {
-    [&SUPIPARA_ARCHIVE_PROFILE, &TRINOLINE_ARCHIVE_PROFILE]
+    [&SUPIPARA_ARCHIVE_PROFILE, &TRINOLINE_ARCHIVE_PROFILE, &EF_ARCHIVE_PROFILE]
         .into_iter()
         .find(|profile| profile.matches_root(root))
 }

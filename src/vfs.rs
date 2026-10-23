@@ -8,9 +8,9 @@ use cipher::{BlockCipherDecrypt, KeyInit};
 use encoding_rs::SHIFT_JIS;
 use miniz_oxide::inflate::decompress_to_vec_zlib;
 
-use crate::profile::{ArchiveProfile, GameProfile, TypePasswordProfile, detect_archive_profile};
-
-const VERSION: u32 = 2;
+use crate::profile::{
+    ArchiveProfile, GameProfile, Rc4SkipScheme, TypePasswordScheme, detect_archive_profile,
+};
 
 #[derive(Debug, Clone)]
 pub struct Entry {
@@ -35,6 +35,7 @@ pub struct PazArchive {
     xor_key: u8,
     data_key: Option<Vec<u8>>,
     movie_key: Option<Vec<u8>>,
+    rc4_skip: Rc4SkipScheme,
     parts: Vec<PathBuf>,
     entries: HashMap<String, Entry>,
 }
@@ -99,7 +100,7 @@ impl PazArchive {
             }
         }
         blowfish_decrypt_le(&mut index, &hex(keys.index)?)?;
-        let parsed = parse_index(&index, &stem, profile.type_passwords)?;
+        let parsed = parse_index(&index, &stem, profile)?;
         let mut parts = Vec::new();
         for suffix in b'A'..=b'Z' {
             let part = PathBuf::from(format!("{}{}", path.display(), suffix as char));
@@ -114,6 +115,7 @@ impl PazArchive {
             xor_key,
             data_key,
             movie_key: parsed.movie_key,
+            rc4_skip: profile.rc4_skip,
             parts,
             entries: parsed.entries,
         })
@@ -155,7 +157,7 @@ impl PazArchive {
                 .ok_or_else(|| format!("archive has no data key: {}", entry.name))?;
             blowfish_decrypt_le(&mut data, data_key)?;
             if let Some(key) = &entry.rc4_key {
-                rc4_apply(&mut data, key, VERSION);
+                rc4_apply(&mut data, key, self.rc4_skip);
             }
         }
         data.truncate(entry.size as usize);
@@ -244,7 +246,7 @@ impl Vfs {
 fn parse_index(
     data: &[u8],
     stem: &str,
-    type_passwords: TypePasswordProfile,
+    profile: &ArchiveProfile,
 ) -> Result<ParsedIndex, String> {
     let mut cursor = Cursor { data, pos: 0 };
     let count = cursor.i32()?;
@@ -273,7 +275,7 @@ fn parse_index(
             &name,
             matches!(stem, "bgm" | "se" | "voice"),
             packed,
-            type_passwords,
+            profile,
         );
         let rc4_key = password.map(|password| {
             let source = format!(
@@ -303,10 +305,14 @@ fn type_password(
     name: &str,
     audio: bool,
     packed: bool,
-    passwords: TypePasswordProfile,
+    profile: &ArchiveProfile,
 ) -> Option<&'static str> {
     if packed {
         return None;
+    }
+    let passwords = profile.type_passwords;
+    if profile.password_scheme == TypePasswordScheme::PerArchive {
+        return Some(passwords.png);
     }
     let lower = name.to_ascii_lowercase();
     if lower.ends_with(".png") {
@@ -339,7 +345,7 @@ pub(crate) fn blowfish_decrypt_le(data: &mut [u8], key: &[u8]) -> Result<(), Str
     Ok(())
 }
 
-fn rc4_apply(data: &mut [u8], key: &[u8], version: u32) {
+fn rc4_apply(data: &mut [u8], key: &[u8], skip: Rc4SkipScheme) {
     let mut state = [0u8; 256];
     for (i, value) in state.iter_mut().enumerate() {
         *value = i as u8;
@@ -360,7 +366,7 @@ fn rc4_apply(data: &mut [u8], key: &[u8], version: u32) {
         state[y] = a;
         state[(a as usize + b as usize) & 0xff]
     };
-    if version >= 2 {
+    if skip == Rc4SkipScheme::Crc32 {
         for _ in 0..((crc32fast::hash(key) >> 12) & 0xff) {
             let _ = next();
         }
@@ -380,7 +386,7 @@ fn movie_decrypt(data: &mut [u8], movie_key: &[u8], entry_key: &[u8]) {
         .map(|(index, value)| value ^ entry_key[index % entry_key.len()])
         .collect();
     let mut block = vec![0; data.len().min(0x10000)];
-    rc4_apply(&mut block, &key, 0);
+    rc4_apply(&mut block, &key, Rc4SkipScheme::None);
     for (index, value) in data.iter_mut().enumerate() {
         *value ^= block[index % block.len()];
     }
