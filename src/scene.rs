@@ -1892,6 +1892,34 @@ fn composite_full_frame(output: &mut [u8], layer: &Frame) {
 }
 
 
+/// Exact 32-bit pixel kernel from ef 0x51f430..0x51f683, expressed in RGBA
+/// rather than native packed 0xAARRGGBB. This is not standard HSV: V enters
+/// every matrix coefficient, and signed IMUL intentionally wraps at 32 bits.
+/// Kept separate until standing-art consumers and stage lifetimes are traced.
+#[allow(dead_code)]
+fn ef_sv_matrix_rgba(output: &mut [u8], saturation: i32, value: i32) {
+    let q = ((saturation.clamp(-100, 100) + 100) << 16) / 100;
+    let complement = 65536_i32 - q;
+    let bias = value.clamp(-100, 100) << 8;
+    let weights = [0x4c8b_i32, 0x9646, 0x1d2f];
+    let coefficients = weights.map(|weight| {
+        (complement.wrapping_mul(weight) >> 16).wrapping_add(bias)
+    });
+    for pixel in output.chunks_exact_mut(4) {
+        if pixel[3] == 0 {
+            continue;
+        }
+        let rgb = [i32::from(pixel[0]), i32::from(pixel[1]), i32::from(pixel[2])];
+        let common = rgb.into_iter().zip(coefficients).fold(0_i32, |sum, (channel, coefficient)| {
+            sum.wrapping_add(channel.wrapping_mul(coefficient))
+        });
+        for channel in 0..3 {
+            pixel[channel] = ((common.wrapping_add(rgb[channel].wrapping_mul(q))) >> 16)
+                .clamp(0, 255) as u8;
+        }
+    }
+}
+
 fn rotate_frame(
     canvas: Canvas,
     source: &[u8], center_x: f64, center_y: f64, angle: f64) -> Vec<u8> {
@@ -3195,6 +3223,26 @@ mod tests {
             sequence: None,
             movement: None,
         }
+    }
+
+    #[test]
+    fn ef_sv_matrix_matches_native_fixedpoint_instructions() {
+        let original = [120, 80, 40, 128, 200, 100, 50, 0];
+        let mut rgba = original;
+        ef_sv_matrix_rgba(&mut rgba, 0, 0);
+        assert_eq!(rgba, original);
+        // q=65536, each off-diagonal=5<<8: the sum contributes
+        // floor((120+80+40)*1280/65536)=4 to every component.
+        ef_sv_matrix_rgba(&mut rgba, 0, 5);
+        assert_eq!(rgba, [124, 84, 44, 128, 200, 100, 50, 0]);
+        let mut rgba = [255, 0, 0, 255, 0, 255, 0, 127, 0, 0, 255, 1];
+        ef_sv_matrix_rgba(&mut rgba, -100, 0);
+        // Native low-word IMUL wraps 65536*0x9646 to a negative
+        // signed coefficient (-27066); do not replace with float luma.
+        assert_eq!(rgba, [76, 76, 76, 255, 0, 0, 0, 127, 29, 29, 29, 1]);
+        let mut rgba = [120, 80, 40, 128];
+        ef_sv_matrix_rgba(&mut rgba, 100, 0);
+        assert_eq!(rgba, [232, 152, 72, 128]);
     }
 
     #[test]
