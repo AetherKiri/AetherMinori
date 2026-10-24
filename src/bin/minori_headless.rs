@@ -8,7 +8,7 @@
 //!
 //! Usage:
 //!   minori-headless GAME_ROOT OUTPUT_DIR [--frames N] [--delta MS] [--clicks N]
-//!                   [--language e|j] [--start SCRIPT] [--every N] [--choose 0,1,...]
+//!                   [--language e|j] [--start SCRIPT] [--every N] [--choose 0,1,...] [--verify-audio]
 
 use std::env;
 use std::io::Write;
@@ -21,7 +21,7 @@ fn main() -> Result<(), String> {
     let mut args = env::args_os().skip(1);
     let root = PathBuf::from(args.next().ok_or(
         "usage: minori-headless GAME_ROOT OUTPUT_DIR [--frames N] [--delta MS] [--clicks N] \
-         [--language e|j] [--start SCRIPT] [--every N] [--choose 0,1,...]",
+         [--language e|j] [--start SCRIPT] [--every N] [--choose 0,1,...] [--verify-audio]",
     )?);
     let output = PathBuf::from(args.next().ok_or("missing OUTPUT_DIR")?);
     let mut frames = 120usize;
@@ -30,6 +30,7 @@ fn main() -> Result<(), String> {
     let mut clicks = 0usize;
     let mut language = "j".to_string();
     let mut start: Option<String> = None;
+    let mut verify_audio = false;
     // Zero-based answers by branch ordinal; unspecified branches use option zero.
     let mut choices: Vec<usize> = Vec::new();
     while let Some(argument) = args.next() {
@@ -52,6 +53,7 @@ fn main() -> Result<(), String> {
             "--clicks" => clicks = value()?.parse().map_err(|e| format!("{e}"))?,
             "--language" => language = value()?,
             "--start" => start = Some(value()?),
+            "--verify-audio" => verify_audio = true,
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -94,6 +96,27 @@ fn main() -> Result<(), String> {
         for (name, value) in aether_minori_runtime::headless::take_requests() {
             requests.push((name.clone(), value.clone()));
             match name.as_str() {
+                "minori_audio" if verify_audio => {
+                    let fields: Vec<&str> = value.split('\t').collect();
+                    if let Some(path) = fields.get(1).filter(|p| !p.is_empty()) {
+                        let file = std::fs::File::open(path).map_err(|e| format!("open audio: {e}"))?;
+                        let mut decoder = lewton::inside_ogg::OggStreamReader::new(file)
+                            .map_err(|e| format!("audio header {path}: {e}"))?;
+                        let channels = decoder.ident_hdr.audio_channels;
+                        let rate = decoder.ident_hdr.audio_sample_rate;
+                        let mut samples = 0u64;
+                        let mut peak = 0u16;
+                        while let Some(packet) = decoder.read_dec_packet_itl()
+                            .map_err(|e| format!("audio decode {path}: {e}"))? {
+                            samples += packet.len() as u64;
+                            peak = peak.max(packet.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0));
+                        }
+                        writeln!(trace, "audio\t{index}\t{}\t{channels}\t{rate}\t{samples}\t{peak}",
+                            fields.get(5).copied().unwrap_or(""))
+                            .map_err(|e| format!("write audio trace: {e}"))?;
+                        runtime.submit_response("minori_audio", "result=complete")?;
+                    }
+                }
                 "minori_message" => {
                     if value.is_empty() {
                         message = None;
