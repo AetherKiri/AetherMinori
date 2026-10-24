@@ -88,7 +88,8 @@ pub struct EngineRuntimeHost {
     pub(crate) user_data: *mut c_void,
     pub(crate) log: Option<unsafe extern "C" fn(*mut c_void, u32, *const c_char, *const c_char)>,
     pub(crate) monotonic_time_micros: Option<unsafe extern "C" fn(*mut c_void) -> u64>,
-    pub(crate) platform_request: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char)>,
+    pub(crate) platform_request:
+        Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char)>,
     pub(crate) reserved_u64: [u64; 4],
     pub(crate) reserved_ptr: [*mut c_void; 3],
 }
@@ -113,27 +114,34 @@ pub struct Provider {
         ) -> i32,
     >,
     pub(crate) destroy: Option<unsafe extern "C" fn(*mut c_void)>,
-    pub(crate) open_game: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> i32>,
+    pub(crate) open_game:
+        Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> i32>,
     pub(crate) tick: Option<unsafe extern "C" fn(*mut c_void, u32) -> i32>,
     pub(crate) pause: Unary,
     pub(crate) resume: Unary,
     pub(crate) set_option: Option<unsafe extern "C" fn(*mut c_void, *const c_void) -> i32>,
     pub(crate) set_surface_size: Option<unsafe extern "C" fn(*mut c_void, u32, u32) -> i32>,
-    pub(crate) get_frame_desc: Option<unsafe extern "C" fn(*mut c_void, *mut EngineFrameDesc) -> i32>,
-    pub(crate) read_frame_rgba: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> i32>,
+    pub(crate) get_frame_desc:
+        Option<unsafe extern "C" fn(*mut c_void, *mut EngineFrameDesc) -> i32>,
+    pub(crate) read_frame_rgba:
+        Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> i32>,
     pub(crate) get_godot_native_frame_texture:
         Option<unsafe extern "C" fn(*mut c_void, *mut u64, *mut u32, *mut u32, *mut u64) -> i32>,
-    pub(crate) get_host_native_window: Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> i32>,
-    pub(crate) get_host_native_view: Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> i32>,
+    pub(crate) get_host_native_window:
+        Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> i32>,
+    pub(crate) get_host_native_view:
+        Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> i32>,
     pub(crate) send_input: Option<unsafe extern "C" fn(*mut c_void, *const c_void) -> i32>,
     pub(crate) get_main_menu_json:
         Option<unsafe extern "C" fn(*mut c_void, *mut c_char, u32, *mut u32) -> i32>,
     pub(crate) activate_menu_item: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> i32>,
-    pub(crate) set_render_target_iosurface: Option<unsafe extern "C" fn(*mut c_void, u32, u32, u32) -> i32>,
+    pub(crate) set_render_target_iosurface:
+        Option<unsafe extern "C" fn(*mut c_void, u32, u32, u32) -> i32>,
     pub(crate) set_render_target_surface:
         Option<unsafe extern "C" fn(*mut c_void, *mut c_void, u32, u32) -> i32>,
     pub(crate) get_frame_rendered_flag: Option<unsafe extern "C" fn(*mut c_void, *mut u32) -> i32>,
-    pub(crate) get_renderer_info: Option<unsafe extern "C" fn(*mut c_void, *mut c_char, u32) -> i32>,
+    pub(crate) get_renderer_info:
+        Option<unsafe extern "C" fn(*mut c_void, *mut c_char, u32) -> i32>,
     pub(crate) get_memory_stats: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32>,
     pub(crate) get_plugin_debug_info:
         Option<unsafe extern "C" fn(*mut c_void, *mut c_char, u32, *mut u32) -> i32>,
@@ -142,7 +150,8 @@ pub struct Provider {
     pub(crate) submit_platform_response:
         Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> i32>,
     pub(crate) get_text_input_state: Option<unsafe extern "C" fn(*mut c_void, *mut u32) -> i32>,
-    pub(crate) get_godot_presentation_state: Option<unsafe extern "C" fn(*mut c_void, *mut u32) -> i32>,
+    pub(crate) get_godot_presentation_state:
+        Option<unsafe extern "C" fn(*mut c_void, *mut u32) -> i32>,
     pub(crate) reserved_ptr: [*mut c_void; 5],
 }
 
@@ -178,6 +187,7 @@ struct Runtime {
     scene: Option<SceneSystem>,
     error: CString,
     failed: bool,
+    paused: bool,
     delivered_serial: u64,
 }
 
@@ -761,7 +771,11 @@ impl Runtime {
         self.clear_movie();
         fs::create_dir_all(&self.cache_path)
             .map_err(|error| format!("create movie cache: {error}"))?;
-        let extension = if data.starts_with(b"\x00\x00\x01\xba") { "mpg" } else { "avi" };
+        let extension = if data.starts_with(b"\x00\x00\x01\xba") {
+            "mpg"
+        } else {
+            "avi"
+        };
         let path = self.cache_path.join(format!(
             "minori-movie-{}-{}.{extension}",
             std::process::id(),
@@ -986,6 +1000,7 @@ unsafe extern "C" fn create(
         scene: None,
         error: safe_cstring(""),
         failed: false,
+        paused: false,
         delivered_serial: 0,
     });
     unsafe {
@@ -1055,6 +1070,7 @@ unsafe extern "C" fn open_game(opaque: *mut c_void, root: *const c_char, _: *con
             runtime.scene = Some(scene);
             runtime.delivered_serial = 0;
             runtime.failed = false;
+            runtime.paused = false;
             match start_new_game(runtime) {
                 Ok(()) => OK,
                 Err(error) => runtime.fail(error, INVALID_STATE),
@@ -1070,6 +1086,9 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
     };
     if runtime.failed {
         return INVALID_STATE;
+    }
+    if runtime.paused {
+        return OK;
     }
     if runtime
         .scene
@@ -1311,16 +1330,17 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
                             .ok_or_else(|| "game VFS is not mounted".to_string())
                             .and_then(|vfs| vfs.read(&request.name));
                         match result {
-                            Ok(data)
-                                if supported_movie_container(&data) =>
-                            {
+                            Ok(data) if supported_movie_container(&data) => {
                                 if let Err(error) = runtime.request_movie(request, data) {
                                     return runtime.fail(error, INVALID_STATE);
                                 }
                             }
                             Ok(_) => {
                                 return runtime.fail(
-                                    format!("movie is neither RIFF AVI nor MPEG program stream: {}", request.name),
+                                    format!(
+                                        "movie is neither RIFF AVI nor MPEG program stream: {}",
+                                        request.name
+                                    ),
                                     INVALID_STATE,
                                 );
                             }
@@ -1640,12 +1660,20 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
         Err(error) => runtime.fail(error, INVALID_STATE),
     }
 }
-unsafe extern "C" fn unary(opaque: *mut c_void) -> i32 {
-    if opaque.is_null() {
-        INVALID_ARGUMENT
-    } else {
-        OK
-    }
+unsafe extern "C" fn pause(opaque: *mut c_void) -> i32 {
+    let Some(runtime) = (unsafe { runtime(opaque) }) else {
+        return INVALID_ARGUMENT;
+    };
+    runtime.paused = true;
+    OK
+}
+
+unsafe extern "C" fn resume(opaque: *mut c_void) -> i32 {
+    let Some(runtime) = (unsafe { runtime(opaque) }) else {
+        return INVALID_ARGUMENT;
+    };
+    runtime.paused = false;
+    OK
 }
 unsafe extern "C" fn set_option(opaque: *mut c_void, option: *const c_void) -> i32 {
     let Some(runtime) = (unsafe { runtime(opaque) }) else {
@@ -1672,7 +1700,10 @@ unsafe extern "C" fn set_option(opaque: *mut c_void, option: *const c_void) -> i
                 runtime.error = safe_cstring("");
                 OK
             }
-            None => runtime.fail(format!("unknown script language: {value}"), INVALID_ARGUMENT),
+            None => runtime.fail(
+                format!("unknown script language: {value}"),
+                INVALID_ARGUMENT,
+            ),
         },
         // Which script a new game starts from. ef opens on test.sc, which
         // chains straight into the common route; a host that wants to jump
@@ -1757,9 +1788,7 @@ fn decode_script(name: &str, bytes: &[u8]) -> Result<String, String> {
     if !gbk_errors {
         return Ok(gbk.into_owned());
     }
-    Err(format!(
-        "{name}: script is neither Shift-JIS nor GBK"
-    ))
+    Err(format!("{name}: script is neither Shift-JIS nor GBK"))
 }
 
 fn start_new_game(runtime: &mut Runtime) -> Result<(), String> {
@@ -1802,6 +1831,9 @@ unsafe extern "C" fn send_input(opaque: *mut c_void, event: *const c_void) -> i3
     }
     if runtime.failed {
         return INVALID_STATE;
+    }
+    if runtime.paused {
+        return OK;
     }
     let event = unsafe { &*(event as *const EngineInputEvent) };
     if event.struct_size < size_of::<EngineInputEvent>() as u32 {
@@ -2105,6 +2137,61 @@ unsafe extern "C" fn last_error(opaque: *mut c_void) -> *const c_char {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn provider_pause_resume_and_tick_state_are_consistent() {
+        let mut runtime = super::Runtime {
+            profile: None,
+            vfs: None,
+            vm: None,
+            pending_transition: None,
+            pending_stage: None,
+            pending_panel: None,
+            current_message: None,
+            current_voice: None,
+            current_bgm: None,
+            current_effect: None,
+            effect_fading_out: false,
+            current_se: [None, None, None],
+            current_movie: None,
+            voice_lip: None,
+            message_reveal: None,
+            message_icon_path: None,
+            movie_data: Vec::new(),
+            movie_path: None,
+            audio_paths: [None, None, None, None, None],
+            writable_path: std::env::temp_dir(),
+            cache_path: std::env::temp_dir(),
+            host_user_data: std::ptr::null_mut(),
+            platform_request: None,
+            persistence_pending: false,
+            pending_save_slot: None,
+            persisted_globals: std::collections::HashMap::new(),
+            language: super::Language::default(),
+            start_script: None,
+            scene: None,
+            error: std::ffi::CString::default(),
+            failed: false,
+            paused: false,
+            delivered_serial: 0,
+        };
+        let handle = std::ptr::addr_of_mut!(runtime).cast::<std::ffi::c_void>();
+
+        assert_eq!(unsafe { super::pause(handle) }, super::OK);
+        assert_eq!(unsafe { super::tick(handle, 16) }, super::OK);
+        assert!(runtime.paused);
+
+        assert_eq!(unsafe { super::resume(handle) }, super::OK);
+        assert!(!runtime.paused);
+        assert_eq!(
+            unsafe { super::pause(std::ptr::null_mut()) },
+            super::INVALID_ARGUMENT
+        );
+        assert_eq!(
+            unsafe { super::resume(std::ptr::null_mut()) },
+            super::INVALID_ARGUMENT
+        );
+    }
+
+    #[test]
     fn movie_container_admits_ef_mpeg_logo_and_avi_but_not_wave() {
         assert!(super::supported_movie_container(b"\x00\x00\x01\xba\x21"));
         assert!(super::supported_movie_container(b"RIFF1234AVI "));
@@ -2262,8 +2349,8 @@ static mut PROVIDER: Provider = Provider {
     destroy: Some(destroy),
     open_game: Some(open_game),
     tick: Some(tick),
-    pause: Some(unary),
-    resume: Some(unary),
+    pause: Some(pause),
+    resume: Some(resume),
     set_option: Some(set_option),
     set_surface_size: Some(set_surface_size),
     get_frame_desc: Some(get_frame_desc),
