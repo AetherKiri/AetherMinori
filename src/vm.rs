@@ -449,8 +449,12 @@ impl Vm {
             VmState::PendingChain { path } => {
                 let program =
                     load_script(&path).map_err(|error| format!("chain {path}: {error}"))?;
+                // Local variables survive a chain. 107_04.sc raises favMiyako
+                // and chains on, and 108_01.sc reads it three scripts later to
+                // pick the Miyako route; clearing here silently dropped the flag
+                // and every affection branch fell to the low path.
+                // .pragma clear_local_variables is the documented way to reset.
                 self.frames.clear();
-                self.locals.clear();
                 self.frames.push(ScriptFrame::new(path.clone(), program));
                 self.state = VmState::Ready;
                 events.push(VmEvent::ScriptChanged(path));
@@ -1600,6 +1604,27 @@ mod tests {
             zero.tick(0, no_scripts).unwrap_err(),
             "assignment division by zero"
         );
+    }
+
+    #[test]
+    fn local_variables_survive_a_chain() {
+        // 107_04.sc sets favMiyako and chains; 108_01.sc reads it later.
+        let mut vm = Vm::new("first.sc", program(".set favMiyako = favMiyako + 1
+.chain second.sc
+.end"));
+        let scripts = |name: &str| match name {
+            "second.sc" => Ok(program(".set seen = favMiyako
+.end")),
+            other => Err(format!("unexpected {other}")),
+        };
+        for _ in 0..8 {
+            vm.tick(0, scripts).unwrap();
+            if vm.state() == &VmState::Finished {
+                break;
+            }
+        }
+        assert_eq!(vm.local("favMiyako"), Some(1));
+        assert_eq!(vm.local("seen"), Some(1));
     }
 
     #[test]
