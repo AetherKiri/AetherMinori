@@ -1,0 +1,15 @@
+# Round 25 — corrected scene timeline and panel comparison
+
+The previous diagnosis in [Round 24](ROUND24.md) needs correction: this is not an anomalous flat panel-color block. I personally inspected the three neighboring captures:
+
+- [frame 88000](round20-current/frame-88000.png): prior dialogue over the preceding standing-art scene.
+- [frame 96000](round20-current/frame-96000.png): a different CG above the message area and a large flat lavender-colored area below. The frame is sampled at loop iteration 96000; it is not a script program counter. Its trace row puts the runtime in `200_01.sc`, message id `880`, around `WaitingTransition` / `WaitingInput`.
+- [frame 104000](round20-current/frame-104000.png): the expected layered CG, dialogue panel/shading, dialogue, and black cinematic bars. The bars are intentional and preserved.
+
+Parsed the original Shift-JIS `200_01.sc` using the repository parser. At statements 173–175, the script issues transition type `0`, wildcard, duration `20`; then `.stage past_window.png ev02_007c01.png 0 0`; then message `880`. The stage operands are the 800×600 screen layer and CG layer. Later in this script, stage changes use the same screen/CG pairing. There is no `.frame` command in this script. This corrects the prior round's mistaken statement-207 attribution and its proposed `.frame` lifetime lead.
+
+Compared the saved image with `sys/msgPanel.png` (800×247). The panel asset is dark navy with transparency, and the 104000 image is consistent with panel shading over its scene. The 96000 flat lavender area does not resemble the panel asset. Therefore the area should not be described as a defective or incorrectly colored message panel. What causes it remains unknown: source assets for the scene transition were not present in the extracted corpus, and the sampled transition/frame capture alone does not establish whether the visible area is in the source artwork, transition intermediate, or a headless-backend composition.
+
+Inspected `SceneSystem::apply_stage`, `refresh_composed_frame`, transition target generation, and the headless screenshot path. The stage transition snapshots `self.frame.rgba` as its old image and composes panel state into the new target; the headless backend then draws dialogue text onto the returned provider frame. This is enough to identify candidate state boundaries, not to prove the retail renderer's behavior or the origin of the lavender pixels. No production rendering change is justified by the evidence so far.
+
+No test or route replay was run in this round; no before/after claim is made. The one-off parser and Cargo bin registration were removed; the working tree was clean afterward. Remaining work: reproduce a short provider-ABI capture at finer intervals around message 880 with explicit transition/frame-state trace, obtain the actual scene assets through the game VFS, and compare exact pixels before deciding whether a focused regression or fix is warranted. Original Windows parity, audio-command behavior, standing-art HSV transfer, other route visuals, and host-side runtime validation remain open. Exact parity is not claimed.
