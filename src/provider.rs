@@ -761,8 +761,9 @@ impl Runtime {
         self.clear_movie();
         fs::create_dir_all(&self.cache_path)
             .map_err(|error| format!("create movie cache: {error}"))?;
+        let extension = if data.starts_with(b"\x00\x00\x01\xba") { "mpg" } else { "avi" };
         let path = self.cache_path.join(format!(
-            "minori-movie-{}-{}.avi",
+            "minori-movie-{}-{}.{extension}",
             std::process::id(),
             request.id
         ));
@@ -788,6 +789,11 @@ impl Runtime {
         }
         Ok(())
     }
+}
+
+fn supported_movie_container(data: &[u8]) -> bool {
+    (data.starts_with(b"RIFF") && data.get(8..12) == Some(b"AVI "))
+        || data.starts_with(b"\x00\x00\x01\xba")
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1317,8 +1323,7 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
                             .and_then(|vfs| vfs.read(&request.name));
                         match result {
                             Ok(data)
-                                if data.starts_with(b"RIFF")
-                                    && data.get(8..12) == Some(b"AVI ") =>
+                                if supported_movie_container(&data) =>
                             {
                                 if let Err(error) = runtime.request_movie(request, data) {
                                     return runtime.fail(error, INVALID_STATE);
@@ -1326,7 +1331,7 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
                             }
                             Ok(_) => {
                                 return runtime.fail(
-                                    format!("movie is not a RIFF AVI: {}", request.name),
+                                    format!("movie is neither RIFF AVI nor MPEG program stream: {}", request.name),
                                     INVALID_STATE,
                                 );
                             }
@@ -2133,6 +2138,13 @@ unsafe extern "C" fn last_error(opaque: *mut c_void) -> *const c_char {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn movie_container_admits_ef_mpeg_logo_and_avi_but_not_wave() {
+        assert!(super::supported_movie_container(b"\x00\x00\x01\xba\x21"));
+        assert!(super::supported_movie_container(b"RIFF1234AVI "));
+        assert!(!super::supported_movie_container(b"RIFF1234WAVE"));
+        assert!(!super::supported_movie_container(b"RIFF"));
+    }
     use super::{
         AudioHostRequest, MessageRevealState, VoiceLipState, message_display_text,
         message_lip_actor, message_speaker_text,
