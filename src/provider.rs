@@ -2179,6 +2179,19 @@ mod tests {
         assert_eq!(unsafe { super::tick(handle, 16) }, super::OK);
         assert!(runtime.paused);
 
+        let short_event = 0_u32;
+        assert_eq!(
+            unsafe { super::send_input(handle, std::ptr::addr_of!(short_event).cast()) },
+            super::OK,
+            "paused input is ignored before event contents are read"
+        );
+        assert_eq!(
+            unsafe { super::send_input(handle, std::ptr::null()) },
+            super::INVALID_ARGUMENT,
+            "null event pointers remain invalid even while paused"
+        );
+        assert!(!runtime.failed);
+
         assert_eq!(unsafe { super::resume(handle) }, super::OK);
         assert!(!runtime.paused);
         assert_eq!(
