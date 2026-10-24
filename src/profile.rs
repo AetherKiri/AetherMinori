@@ -608,6 +608,8 @@ mod tests {
 
     #[test]
     fn ef_profile_has_no_in_engine_title_screen() {
+        assert!(EF_PROFILE.ui.title.is_none());
+        assert!(!EF_PROFILE.has_title_screen());
         assert_eq!(EF_ARCHIVE_PROFILE.archive_keys.len(), 8);
         let movie = EF_ARCHIVE_PROFILE.archive_key("mov").unwrap();
         assert_eq!(movie.password, Some("qmzj4Y9C"));
