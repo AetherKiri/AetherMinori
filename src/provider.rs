@@ -1330,7 +1330,14 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
                                     INVALID_STATE,
                                 );
                             }
-                            Err(error) => return runtime.fail(error, INVALID_STATE),
+                            // mov.paz ships separately, and the story still has
+                            // to run when it is absent: 701_01.sc plays the
+                            // ending movie behind an `if ef_clear == 1` guard and
+                            // then carries straight on.
+                            Err(error) => {
+                                runtime.error = safe_cstring(&error);
+                                continue;
+                            }
                         }
                     }
                     VmEvent::PlayBgm(request) => {
