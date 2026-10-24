@@ -840,8 +840,11 @@ fn message_display_text(text: &str) -> Result<MessagePresentation, String> {
         };
         match control {
             // CTextDrawer::drawText at 0x41D7A0 consumes these without
-            // submitting either byte to the glyph renderer.
-            'a' | 'v' => total_steps = total_steps.saturating_add(1),
+            // submitting either byte to the glyph renderer. \w is the pause
+            // marker the corpus repeats to stutter a shout -- 100_01.sc uses it
+            // 24 times in a row after 「抓贼啊！！！」 -- so it advances the reveal
+            // clock without drawing anything.
+            'a' | 'v' | 'w' => total_steps = total_steps.saturating_add(1),
             'n' => {
                 output.push('\n');
                 total_steps = total_steps.saturating_add(1);
@@ -2179,6 +2182,15 @@ mod tests {
             "message control \\p is not implemented"
         );
         assert!(message_display_text("incomplete\\").is_err());
+    }
+
+    #[test]
+    fn message_pause_marker_advances_the_clock_without_drawing() {
+        // 100_01.sc stutters a shout with 24 consecutive pauses.
+        let stutter = format!("抓贼{}", r"\w".repeat(24));
+        let presentation = message_display_text(&stutter).unwrap();
+        assert_eq!(presentation.text, "抓贼");
+        assert_eq!(presentation.total_steps, 2 + 24);
     }
 
     #[test]
