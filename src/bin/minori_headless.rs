@@ -24,6 +24,7 @@ fn main() -> Result<(), String> {
     )?);
     let output = PathBuf::from(args.next().ok_or("missing OUTPUT_DIR")?);
     let mut frames = 120usize;
+    let mut every = 20usize;
     let mut delta = 16u32;
     let mut clicks = 0usize;
     let mut language = "j".to_string();
@@ -37,6 +38,7 @@ fn main() -> Result<(), String> {
         };
         match text.as_str() {
             "--frames" => frames = value()?.parse().map_err(|e| format!("{e}"))?,
+            "--every" => every = value()?.parse::<usize>().map_err(|e| format!("{e}"))?.max(1),
             "--delta" => delta = value()?.parse().map_err(|e| format!("{e}"))?,
             "--clicks" => clicks = value()?.parse().map_err(|e| format!("{e}"))?,
             "--language" => language = value()?,
@@ -97,7 +99,11 @@ fn main() -> Result<(), String> {
         if trace.last() != Some(&line) {
             trace.push(line);
         }
-        if let Some((width, height, mut rgba)) = runtime.frame() {
+        // Only sample frames: a 3,000-tick run would otherwise write several
+        // gigabytes of PNG and has no extra value over the trace.
+        if index % every == 0
+            && let Some((width, height, mut rgba)) = runtime.frame()
+        {
             if let (Some(renderer), Some((speaker, body))) = (text.as_ref(), message.as_ref()) {
                 draw_message(renderer, &mut rgba, width, height, speaker, body, panel_rect);
             }

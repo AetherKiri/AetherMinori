@@ -936,12 +936,9 @@ impl SceneSystem {
             );
         }
         for (layer, x, y) in &layers.foreground {
-            composite_viewport(
-                &mut output,
-                layer,
-                self.camera_x.saturating_sub(*x),
-                self.camera_y.saturating_sub(*y),
-            );
+            // Screen-space overlay: the camera moves the scene behind it, not
+            // the frame itself.
+            composite_viewport(&mut output, layer, -(*x), -(*y));
         }
         self.background_rgba = output.rgba;
         self.render_panel_frame();
@@ -1631,22 +1628,27 @@ impl SceneSystem {
             composite_source_over(&mut image, &overlay, x, y);
             scrolling.push((overlay, x, y));
         }
+        // The base spec is a screen-space overlay: past_window.png and friends are
+        // 800x600 frames that sit on the viewport, not on the (often much taller)
+        // scene image. Compositing them into image space first put a window
+        // frame's black borders in the middle of the screen once the camera
+        // scrolled past them.
+        let mut target = crop_background(self.canvas, &image, request.x, request.y)?;
         if request.base_spec != "*" {
             let (screen, layers) = parse_stage_base(&request.base_spec)?;
             for name in layers {
                 if name != "*" && !name.is_empty() {
                     let overlay = decode_png(&vfs.read(name)?)?;
-                    composite_source_over(&mut image, &overlay, request.base_x, request.base_y);
+                    composite_source_over(&mut target, &overlay, request.base_x, request.base_y);
                     foreground.push((overlay, request.base_x, request.base_y));
                 }
             }
             if !screen.is_empty() && screen != "*" {
                 let overlay = decode_png(&vfs.read(screen)?)?;
-                composite_source_over(&mut image, &overlay, request.base_x, request.base_y);
+                composite_source_over(&mut target, &overlay, request.base_x, request.base_y);
                 foreground.push((overlay, request.base_x, request.base_y));
             }
         }
-        let target = crop_background(self.canvas, &image, request.x, request.y)?;
         self.effect_layers = Some(StageEffectLayers {
             base,
             scrolling,
