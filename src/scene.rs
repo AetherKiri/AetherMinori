@@ -1160,6 +1160,15 @@ impl SceneSystem {
         self.panel_transition.is_some()
     }
 
+    /// Where the message panel currently sits, if one is showing. The host uses
+    /// this to place the dialogue text instead of hard-coding a layout.
+    pub fn panel_rect(&self) -> Option<(u32, u32, i32)> {
+        let panel = self.panel.as_ref()?;
+        let top = self.canvas.height as i32 - panel.height as i32
+            + self.profile.ui.message_panel_offset_y as i32;
+        Some((panel.width, panel.height, top))
+    }
+
     pub fn panel_visible(&self) -> bool {
         self.panel.is_some()
             || self
