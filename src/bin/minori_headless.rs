@@ -115,7 +115,16 @@ fn main() -> Result<(), String> {
                     // take the first option.
                     let wanted = choices.get(branches).copied().unwrap_or(0);
                     branches += 1;
-                    let index = wanted.min(options.len().saturating_sub(1));
+                    if wanted >= options.len() {
+                        return Err(format!("branch {branches}: option {wanted} outside {} choices", options.len()));
+                    }
+                    let index = wanted;
+                    // Capture the actual waiting state before answering. This is a
+                    // backend diagnostic menu, not a claim about the retail UI.
+                    if let (Some(renderer), Some((width, height, mut rgba))) = (text.as_ref(), runtime.frame()) {
+                        draw_choices(renderer, &mut rgba, width, height, &options, index);
+                        write_png(&output.join(format!("branch-{branches:02}.png")), width, height, &rgba)?;
+                    }
                     writeln!(trace, "branch\t{}\t{}", index,
                         options.get(index).copied().unwrap_or(""))
                         .map_err(|e| format!("write trace: {e}"))?;
@@ -159,7 +168,7 @@ fn main() -> Result<(), String> {
         *counts.entry(name.as_str()).or_default() += 1;
     }
     println!("requests={:?}", counts);
-    for (name, value) in requests.iter().filter(|(n, _)| n == "presentation_sprite").take(4) {
+    for (_name, value) in requests.iter().filter(|(n, _)| n == "presentation_sprite").take(4) {
         println!("sprite -> {value}");
     }
     for (name, value) in requests.iter().filter(|(n, _)| n == "minori_message").take(3) {
@@ -234,6 +243,24 @@ fn draw_message(
         [255, 255, 255, 255],
         body,
     );
+}
+
+fn draw_choices(renderer: &TextRenderer, rgba: &mut [u8], width: u32, height: u32, options: &[&str], selected: usize) {
+    let top = height.saturating_sub(options.len() as u32 * 56 + 40) / 2;
+    let left = width / 8;
+    let right = width - left;
+    for (index, option) in options.iter().enumerate() {
+        let y = top + index as u32 * 56;
+        for row in y..(y + 48).min(height) {
+            for col in left..right {
+                let offset = ((row * width + col) * 4) as usize;
+                let color = if index == selected { [40, 70, 110, 255] } else { [20, 20, 35, 255] };
+                rgba[offset..offset + 4].copy_from_slice(&color);
+            }
+        }
+        renderer.draw(rgba, width, height, left as f32 + 20.0, y as f32 + 32.0,
+            (right - left - 40) as f32, 26.0, [255,255,255,255], &format!("{}  {option}", index + 1));
+    }
 }
 
 fn write_png(path: &std::path::Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
