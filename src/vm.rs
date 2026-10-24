@@ -191,15 +191,16 @@ pub struct LayerRequest {
     pub images: Vec<String>,
 }
 
+/// Original ef scene state, in command operand order (!bgH/S/V, !stH/S/V).
+/// The complete downstream color transfer and layer lifetime remain unresolved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct HsvFilter {
-    pub hue: i32,
-    pub saturation: i32,
-    pub brightness: i32,
-    pub contrast: i32,
-    pub red: i32,
-    pub green: i32,
-    pub blue: i32,
+    pub bg_h: i32,
+    pub bg_s: i32,
+    pub bg_v: i32,
+    pub st_h: i32,
+    pub st_s: i32,
+    pub st_v: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -893,7 +894,7 @@ impl Vm {
                 events.push(VmEvent::SetFrameStills(images));
             }
             CommandKind::HsvFilter => {
-                if arguments.len() < 6 {
+                if arguments.len() != 6 {
                     return Err(format!(
                         "HSVfilter requires 6 values, got {}",
                         arguments.join(" ")
@@ -901,13 +902,12 @@ impl Vm {
                 }
                 let value = |index: usize| self.resolve(&arguments[index]);
                 events.push(VmEvent::SetHsvFilter(HsvFilter {
-                    hue: value(0),
-                    saturation: value(1),
-                    brightness: value(2),
-                    contrast: value(3),
-                    red: value(4),
-                    green: value(5),
-                    blue: 0,
+                    bg_h: value(0),
+                    bg_s: value(1),
+                    bg_v: value(2),
+                    st_h: value(3),
+                    st_s: value(4),
+                    st_v: value(5),
                 }));
             }
             CommandKind::Panel => {
@@ -1346,6 +1346,28 @@ mod tests {
 
     fn no_scripts(_: &str) -> Result<Program, String> {
         Err("unexpected script load".into())
+    }
+
+    #[test]
+    fn hsv_filter_preserves_original_layer_operand_order() {
+        for (operands, expected) in [
+            ("1 -2 3 -4 5 -6", HsvFilter { bg_h: 1, bg_s: -2, bg_v: 3, st_h: -4, st_s: 5, st_v: -6 }),
+            ("0 0 0 5 -5 0", HsvFilter { st_h: 5, st_s: -5, ..HsvFilter::default() }),
+            ("0 0 0 0 5 -5", HsvFilter { st_s: 5, st_v: -5, ..HsvFilter::default() }),
+            ("0 0 0 0 0 0", HsvFilter::default()),
+        ] {
+            let mut vm = Vm::new("hsv.sc", program(&format!(".HSVfilter {operands}\n.end")));
+            let events = vm.tick(0, no_scripts).unwrap();
+            assert_eq!(events, vec![VmEvent::SetHsvFilter(expected)]);
+        }
+    }
+
+    #[test]
+    fn hsv_filter_requires_exactly_six_operands() {
+        for operands in ["0 0 0 0 0", "0 0 0 0 0 0 0"] {
+            let mut vm = Vm::new("hsv.sc", program(&format!(".HSVfilter {operands}")));
+            assert!(vm.tick(0, no_scripts).unwrap_err().contains("requires 6 values"));
+        }
     }
 
     #[test]

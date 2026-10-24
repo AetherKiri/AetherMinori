@@ -1366,7 +1366,9 @@ impl SceneSystem {
         Ok(())
     }
 
-    /// .HSVfilter: hue rotation, saturation, brightness, contrast, RGB bias.
+    /// Preserve the original independent background/standing-art HSV state.
+    /// Rendering nonzero corrections remains unresolved; do not reinterpret
+    /// these operands as a global RGB gain on the composited scene.
     pub fn apply_hsv_filter(&mut self, filter: HsvFilter) -> Result<(), String> {
         self.hsv_filter = filter;
         self.refresh_composed_frame();
@@ -1390,7 +1392,8 @@ impl SceneSystem {
             &self.overlay_layers,
             &self.frame_stills,
         );
-        apply_hsv_filter_to(self.canvas, &mut composed, self.hsv_filter);
+        // HSV state is retained, but no color equation is applied until the
+        // original transfer function and per-layer consumers are recovered.
         composite_panel_state(
             self.canvas,
             self.panel_offset_y(),
@@ -1888,32 +1891,6 @@ fn composite_full_frame(output: &mut [u8], layer: &Frame) {
     }
 }
 
-/// Apply the .HSVfilter pass. The six values are authored the way the original
-/// UI exposes them: hue in degrees, saturation / brightness / contrast as
-/// percentages around zero, and a red and green bias in percent. With all six
-/// at zero the image must come through untouched, which the corpus relies on
-/// (every filter is either all-zero or a small warm/cool bias).
-fn apply_hsv_filter_to(canvas: Canvas, output: &mut [u8], filter: HsvFilter) {
-    let _ = canvas;
-    if filter == HsvFilter::default() {
-        return;
-    }
-    let red_gain = 1.0 + f64::from(filter.red) / 100.0;
-    let green_gain = 1.0 + f64::from(filter.green) / 100.0;
-    let blue_gain = 1.0 + f64::from(filter.blue) / 100.0;
-    let brightness = f64::from(filter.brightness) / 100.0;
-    for pixel in output.chunks_exact_mut(4) {
-        let mut rgb = [
-            f64::from(pixel[0]) / 255.0 * red_gain,
-            f64::from(pixel[1]) / 255.0 * green_gain,
-            f64::from(pixel[2]) / 255.0 * blue_gain,
-        ];
-        rgb = rgb.map(|value| (value + brightness).clamp(0.0, 1.0));
-        for channel in 0..3 {
-            pixel[channel] = (rgb[channel] * 255.0).round().clamp(0.0, 255.0) as u8;
-        }
-    }
-}
 
 fn rotate_frame(
     canvas: Canvas,
@@ -3217,6 +3194,36 @@ mod tests {
             next,
             sequence: None,
             movement: None,
+        }
+    }
+
+    #[test]
+    fn hsv_state_only_fallback_never_applies_global_rgb_gains() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        scene.canvas = Canvas::new(2, 1);
+        scene.background_rgba = vec![120, 80, 40, 255, 10, 20, 30, 255];
+        scene.background_source = Frame { width: 2, height: 1, rgba: scene.background_rgba.clone(), serial: 0 };
+        let mut standing = character(1, true, false);
+        standing.image.rgba = vec![200, 100, 50, 128];
+        scene.characters.insert(1, standing);
+        scene.refresh_composed_frame();
+        let original = scene.frame.rgba.clone();
+        let source = scene.background_rgba.clone();
+        // These are state preservation/no-fabricated-rendering assertions,
+        // not original-game expected-pixel tests for nonzero corrections.
+        for filter in [
+            HsvFilter { st_h: 5, st_s: -5, ..HsvFilter::default() },
+            HsvFilter { st_s: 5, st_v: -5, ..HsvFilter::default() },
+            HsvFilter { bg_h: 12, bg_s: -34, bg_v: 56, st_h: -78, st_s: 90, st_v: -12 },
+            HsvFilter::default(),
+        ] {
+            scene.apply_hsv_filter(filter).unwrap();
+            assert_eq!(scene.hsv_filter, filter);
+            assert_eq!(scene.frame.rgba, original);
+            assert_eq!(scene.background_rgba, source);
+            scene.refresh_composed_frame();
+            assert_eq!(scene.frame.rgba, original);
+            assert_eq!(scene.characters[&1].image.rgba, [200, 100, 50, 128]);
         }
     }
 

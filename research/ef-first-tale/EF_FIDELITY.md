@@ -1,4 +1,23 @@
-# ef graphics-command fidelity: bounded read-only audit
+# ef graphics-command fidelity: audit and scoped state correction
+
+## Production follow-up (2026-10-24)
+
+The authorized implementation round corrected `HsvFilter` to six raw fields `bg_h/bg_s/bg_v/st_h/st_s/st_v` and exact-six operand validation, matching the original parser and scene binding below. The fabricated global brightness/red/green equation has been **removed**, not replaced with a guessed standard HSV conversion. The scene stores the two independent triples; nonzero color correction is currently **unimplemented**. This is a scoped state-model fix, not completion of the renderer or all ef commands. All-zero composition remains unchanged. Regression tests cover distinct signed operands, both corpus tuples, wrong arity, retained state, repeated refresh, and an asymmetric background/semitransparent standing-art fixture without altering originals. The latter test intentionally asserts the no-rendering fallback, not original nonzero expected pixels.
+
+### Additional bounded native evidence
+
+Target identity remains SHA-256 `9824732313d13136cb2300f33038a655ba480ae01cefc2749028d1b1748b4f9e`. New complete export: [ef-hsv-implementation-evidence.json](</var/lib/dsh/Minori/ef-re/ef-hsv-implementation-evidence.json>). No game execution or cold Ghidra analysis was performed; process observations inspected original bytes with objdump/Python. No binary target was opened; `close_binary` returned null after export.
+
+- `ev_b86f7f21bfa7d1135b2752559278fcc25031091bce02386391f3402baa96f388`: exact getter bodies 0x42ed40..0x42ed90 read +0x198..+0x1ac.
+- `ev_6dde9515537cdb2ebbab8bda36ef89c20d39d9fd714b01b2a04a30f276ea26a5` and `ev_552167b56fe0cadaf08754f473d8c55ec13641d1a246779b73faa77a322e0cc7`: bounded raw e8/literal-pointer searches did not identify getter callers; syntactic negative results do not prove absence.
+- `ev_26bd46426885e731d7af0c4a9cff0e9039a4ea7bc6fda9a1ad12ad2ab954f33c`: displacement-based candidate search; unrelated objects reuse these offsets, so matches alone are not renderer authority.
+- `ev_bf44c9e19f8c824d514ecf16ab227cfd1f2847b47d5c5b7b57c9d1a8ccd33c10`: 0x5070c8 tests renderer +0x42c/+0x430/+0x434; if any nonzero, passes **only S/V** (+0x430/+0x434) and image +0x98 into 0x51f430 before later composition. Thus a hue rotation must not be invented for this call.
+- `ev_3dd9e09efb1b4ac0a8aa94a6e107b8ab13255e0c0b1f3e0784850e9cd4d9ea19`: 0x51f430 begins a fixedpoint S/V matrix, not textbook HSV. It computes `q = (clamp(S+100,0,200)<<16)/100`; off-diagonal coefficients derive from `(65536-q)` times 0x4c8b/0x9646/0x1d2f with arithmetic shifts, plus `V<<8`. Diagonal coefficients add q. Per-pixel sums shift right16 and clamp to bytes. Its 32-bit path preserves alpha and skips alpha-zero pixels. This candidate arithmetic is recovered but not yet ported/verified against an executable oracle.
+- `ev_23e397be43e4fe0cb1f233aaa4b31466f2ee2babc70162684c945359deaed239`: aligned 0x5069ca copies renderer +0x438/+0x43c/+0x440 into standing object +4/+8/+c. Window prefix starts mid-instruction and is excluded. Downstream standing application, image channel layout, alternate pixel formats, exact hue behavior, initialization/reset/lifetime and stage-extra integration still need a complete traced path before a faithful per-layer port.
+
+A parallel audit handoff also exported [ef-hsv-math-handoff-evidence.json](</var/lib/dsh/Minori/ef-re/ef-hsv-math-handoff-evidence.json>): reported chain 0x4df7f7..0x4df824 to setter 0x4ffb30 and clamping H[-180,180], S/V[-100,100]. These are downstream renderer clamps, not justification to clamp raw command state at parse time. The original eight residuals below remain unless explicitly resolved above.
+
+---
 
 ## One actionable finding
 
