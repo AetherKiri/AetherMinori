@@ -137,7 +137,7 @@ fn main() -> Result<(), String> {
                     let path = value.split('\t').next().ok_or("movie request lacks a path")?;
                     let snapshot = output.join(format!("movie-{index:06}.png"));
                     let first = std::process::Command::new("ffmpeg")
-                        .args(["-nostdin", "-v", "error", "-y", "-i", path, "-frames:v", "1"])
+                        .args(["-nostdin", "-v", "error", "-y", "-i", path, "-vf", "thumbnail=48", "-frames:v", "1"])
                         .arg(&snapshot).output().map_err(|e| format!("start movie decoder: {e}"))?;
                     if !first.status.success() {
                         return Err(format!("movie frame decode failed: {}", String::from_utf8_lossy(&first.stderr)));
@@ -145,8 +145,15 @@ fn main() -> Result<(), String> {
                     let decoded = std::process::Command::new("ffmpeg")
                         .args(["-nostdin", "-v", "error", "-i", path, "-f", "null", "-"])
                         .output().map_err(|e| format!("start movie decoder: {e}"))?;
-                    if !decoded.status.success() || !decoded.stderr.is_empty() {
+                    if !decoded.status.success() {
                         return Err(format!("movie stream decode failed: {}", String::from_utf8_lossy(&decoded.stderr)));
+                    }
+                    if !decoded.stderr.is_empty() {
+                        // Preserve decoder-reported damaged packets; a successful
+                        // process exit is not a claim of lossless media integrity.
+                        writeln!(trace, "movie-warning\t{index}\t{}",
+                            String::from_utf8_lossy(&decoded.stderr).replace('\n', " | "))
+                            .map_err(|e| format!("write movie warning: {e}"))?;
                     }
                     writeln!(trace, "movie\t{index}\tdecoded-offline\t{path}")
                         .map_err(|e| format!("write movie trace: {e}"))?;
