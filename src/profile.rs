@@ -189,6 +189,9 @@ impl GameProfile {
 }
 
 const EF_ARCHIVE_KEYS: &[ArchiveKeyProfile] = &[
+    ArchiveKeyProfile { archive: "bgm", index: "78E52F7768FA49EA1B0EF53F7B38014A835BC8C948EB78D0AB2688B85D46F307", password: Some("52AUwF8B"), data: Some("8B7731E7AA9DAE4C1F216750C32B9D395794B257C353A3C9DFA880733026D32B") },
+    ArchiveKeyProfile { archive: "voice", index: "2FD5D774760B34126F7C3E964FE6CA4CFCDF6A730B891CB1618335270FEB79DF", password: Some("52AUwF8B"), data: Some("151694FDCF2CE124A14E6D1E46E1A7B17395C0CC172DA47CA3AD8CAE42043258") },
+    ArchiveKeyProfile { archive: "se", index: "C3011A3ED51FCD2BD3904DD1772E469709B10D5DC0CB4652CFF5B3A57CDE9038", password: Some("52AUwF8B"), data: Some("3DCA17D9518DE518087077409C8BCB396A6BE53DA76E650238E09905096D1AA8") },
     ArchiveKeyProfile { archive: "scr", index: "72634E755D2C980B205F82828BDE4379F37BD2B66D4390B6436A4D9F8389CA5A", password: Some("102ycz1s"), data: Some("B7D2955CF7A0D3ECC20CCBF887A8C1B6D498ECF5F9B8361E897E4DBC7BAD1465") },
     ArchiveKeyProfile { archive: "bg",  index: "8C7919517E51A0FD8348DC85CB68858E68905BD7D5B96336EA3699C15B683F83", password: Some("a7b77qgx"), data: Some("CA3C7817E1C631E5F88DE7AFF702A3697CB9D5E337E54EDA45546C2910C75FDE") },
     ArchiveKeyProfile { archive: "st",  index: "B891BB7B469812FE98CC267BF1356131C694D340D79D8CD10DB45C5D81C44A9C", password: Some("a7b77qgx"), data: Some("630BDF10C9E57EF99126B50476F59800240CD1B3766A1416E31EBFEE27694F93") },
@@ -602,7 +605,13 @@ mod tests {
 
     #[test]
     fn ef_profile_has_no_in_engine_title_screen() {
-        assert_eq!(EF_ARCHIVE_PROFILE.archive_keys.len(), 4);
+        assert_eq!(EF_ARCHIVE_PROFILE.archive_keys.len(), 7);
+        for archive in ["bgm", "voice", "se"] {
+            let keys = EF_ARCHIVE_PROFILE.archive_key(archive).unwrap();
+            assert_eq!(keys.password, Some("52AUwF8B"));
+            assert_eq!(keys.index.len(), 64);
+            assert_eq!(keys.data.unwrap().len(), 64);
+        }
         assert_eq!(EF_ARCHIVE_PROFILE.password_scheme, TypePasswordScheme::PerArchive);
         assert_eq!(EF_ARCHIVE_PROFILE.rc4_skip, Rc4SkipScheme::None);
         assert_eq!(EF_ARCHIVE_PROFILE.type_passwords.sc, "102ycz1s");

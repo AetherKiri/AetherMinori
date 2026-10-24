@@ -75,6 +75,32 @@ Signature entries verified end to end: `000_01mugai.sc` (text), `WHITE.png`
 
 The type password for ef is **per-archive**, not per-extension: `a7b77qgx` is
 what every encrypted image entry uses. `102ycz1s` is the script password.
-`bgm`, `se` and `voice` do not yield `OggS`/`RIFF` with any recovered key, so
-their payloads use a different scheme and remain unresolved; `mov.paz` also
-still needs its own path.
+The earlier audio failure was due to bounding the data-key table too early,
+not a different cipher. Audio is now resolved (see below); `mov.paz` remains separate.
+
+## Resolved audio (round 3)
+
+All audio uses negated 32-byte keys beyond the original eight-slot boundary:
+
+| archive | index slot at 0x1a7ae0 | payload slot at 0x1a7bc0 | payload key file offset |
+| --- | ---: | ---: | ---: |
+| bgm | 5 | 8 | 0x1a7cc0 |
+| voice | 6 | 9 | 0x1a7ce0 |
+| se | 7 | 10 | 0x1a7d00 |
+
+```text
+bgm   8B7731E7AA9DAE4C1F216750C32B9D395794B257C353A3C9DFA880733026D32B
+voice 151694FDCF2CE124A14E6D1E46E1A7B17395C0CC172DA47CA3AD8CAE42043258
+se    3DCA17D9518DE518087077409C8BCB396A6BE53DA76E650238E09905096D1AA8
+```
+
+Password: **52AUwF8B** for all three. LE Blowfish ECB, then standard RC4
+with zero skip. Key text uses lowercase original index name and unpacked
+size: `<name> <size:08X> 52AUwF8B`. Do not append `.ogg` to voice names.
+
+`python3 research/ef-first-tale/audio_probe.py --verify` validates one complete
+Ogg/Vorbis stream per archive entirely in memory, including every page CRC,
+exact extent, BOS and EOS. Verified: BGM `efBGM056.ogg` 1616925 bytes/382 pages;
+voice `yuk-701_01-0051` 47347 bytes/13 pages; SE `zidouhanbaiki.ogg`
+12097 bytes/5 pages. See [AUDIO.md](AUDIO.md) for decoded SHA-256 hashes and
+probe coverage. No mass extraction or playback test was performed.

@@ -484,6 +484,68 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ef_audio_index_preserves_extensionless_voice_key() {
+        let mut index = 1u32.to_le_bytes().to_vec();
+        index.extend_from_slice(b"yuk-701_01-0051\0");
+        index.extend_from_slice(&233252u64.to_le_bytes());
+        for value in [47347u32, 47347, 47352, 0] {
+            index.extend_from_slice(&value.to_le_bytes());
+        }
+        let parsed = parse_index(&index, "voice", &crate::profile::EF_ARCHIVE_PROFILE).unwrap();
+        let entry = &parsed.entries["yuk-701_01-0051"];
+        assert_eq!(entry.rc4_key.as_deref(), Some(b"yuk-701_01-0051 0000B8F3 52AUwF8B".as_slice()));
+        assert!(!entry.packed);
+    }
+
+    #[test]
+    #[ignore = "requires local ef first tale installation; reads three streams in memory"]
+    fn ef_audio_local_streams_have_valid_ogg_page_crcs() {
+        let root = std::env::var("EF_GAME_ROOT").expect("set EF_GAME_ROOT");
+        let mounted = Vfs::mount_game_with_archive_profile(&root, &crate::profile::EF_ARCHIVE_PROFILE).unwrap();
+        for (archive, expected) in [("bgm", 29), ("voice", 5830), ("se", 89)] {
+            assert_eq!(mounted.entries().filter(|(stem, _)| *stem == archive).count(), expected);
+        }
+        for (archive, name, size, pages) in [
+            ("bgm", "efBGM056.ogg", 1616925, 382),
+            ("voice", "yuk-701_01-0051", 47347, 13),
+            ("se", "zidouhanbaiki.ogg", 12097, 5),
+        ] {
+            let archive = PazArchive::open_with_archive_profile(
+                Path::new(&root).join(format!("{archive}.paz")),
+                &crate::profile::EF_ARCHIVE_PROFILE,
+            ).unwrap();
+            let data = archive.read(name).unwrap();
+            assert_eq!(mounted.read(name).unwrap(), data);
+            assert_eq!(data.len(), size);
+            let mut pos = 0;
+            let mut count = 0;
+            let mut last_flags = 0;
+            while pos < data.len() {
+                assert_eq!(&data[pos..pos+4], b"OggS");
+                let segments = data[pos+26] as usize;
+                let end = pos + 27 + segments + data[pos+27..pos+27+segments].iter().map(|&b| b as usize).sum::<usize>();
+                let page = &data[pos..end];
+                let expected = u32::from_le_bytes(page[22..26].try_into().unwrap());
+                let mut crc = 0u32;
+                for (i, &byte) in page.iter().enumerate() {
+                    crc ^= (if (22..26).contains(&i) { 0 } else { byte } as u32) << 24;
+                    for _ in 0..8 {
+                        crc = (crc << 1) ^ if crc & 0x80000000 != 0 { 0x04c11db7 } else { 0 };
+                    }
+                }
+                assert_eq!(crc, expected);
+                if count == 0 { assert_ne!(page[5] & 2, 0); }
+                last_flags = page[5];
+                count += 1;
+                pos = end;
+            }
+            assert_eq!(pos, size);
+            assert_eq!(count, pages);
+            assert_ne!(last_flags & 4, 0);
+        }
+    }
+
+    #[test]
     fn virtual_read_spans_archive_parts() {
         let directory = tempfile::tempdir().unwrap();
         let primary = directory.path().join("bg.paz");
