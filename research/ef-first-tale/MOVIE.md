@@ -62,11 +62,30 @@ The synthetic regression checks 256-byte table placement, truncation rejection,
 per-archive key text, 64-KiB repeat, short prefix and empty decode.
 The production ef profile now mounts all eight archives including mov.
 
+## Follow-up: complete small logo and terminal MP2 diagnostic
+
+python3 research/ef-first-tale/movie_probe.py --verify-logo reads the complete
+small logo only (446472 aligned bytes) in memory and pipes it to installed
+ffprobe/ffmpeg, never writing an extracted movie. Decoded stored SHA-256:
+4b22979fdf5f813f36ea67b14f9bd63661ab4ec1c3f4c3b7c258a5c0d51e0ead.
+Aligned padding is four zero bytes; stored bytes end in MPEG program-end 000001b9.
+ffprobe exits 0 without errors: 96 MPEG1 video packets, 800x600 at 24fps,
+and 155 MP2 audio packets. The terminal audio packet is only **one byte**,
+reported at position 444428. FFmpeg decodes 96 frames and approximately 693 KiB
+PCM (3.99s), exits 0, but reports one MP2 "Invalid data found" packet diagnostic.
+The same diagnostic occurs with/without aligned padding and without the final
+program-end code. Diagnostic-only removal of the last 2048-byte sector removes
+the error without changing decoded frame/audio totals. That sector has coherent
+pack BA at444416, audio PES C0 at444428, padding BE at445355, then program-end.
+This strongly supports a terminal source/container audio defect, not broken
+64-KiB cipher repetition. It does not prove exact original-player handling.
+No production trim or warning suppression was introduced by this investigation.
+
 ## Scope and residual unknowns
 
 This step proves directory decoding and the first 64 KiB of all four payloads,
-not complete movie integrity, codec decode/playback, end-of-file validity,
-or real-time host integration. Keystream repetition past 64 KiB is covered by
-synthetic regression/reference, not complete shipped movie validation here.
+not complete AVI integrity or real-time host integration. The follow-up extends
+logo coverage to EOF and codec decoding, with the explicit terminal MP2 diagnostic
+above; it does not establish error-free integrity or original-player behavior.
 No movie extraction or REA lifecycle was performed. Packed movie prefixes
 are explicitly rejected; none occur in this installation.

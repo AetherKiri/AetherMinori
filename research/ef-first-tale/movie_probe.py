@@ -53,5 +53,34 @@ def probe():
         print("index_used", pos, "padding", index[pos:].hex())
 
 
+def verify_logo():
+    """Full small-logo check in memory; ffmpeg receives bytes over stdin."""
+    import subprocess
+    import json
+    from paz import d
+    with open(B + "mov.paz", "rb") as f:
+        f.seek(36)
+        index = bf_le(bytes((-b) & 255 for b in d[0x1a7c00:0x1a7c20]), f.read(424))
+        f.seek(460)
+        raw = f.read(446472)
+    key = b"op_logo.mpg 0006D004 qmzj4Y9C"
+    stream = rc4(bytes(index[4+i] ^ key[i % len(key)] for i in range(256)), bytes(65536))
+    aligned = bytes(b ^ stream[i % 65536] for i, b in enumerate(raw))
+    assert aligned[446468:] == bytes(4)
+    data = aligned[:446468]
+    assert data[-4:] == bytes.fromhex("000001b9")
+    assert hashlib.sha256(data).hexdigest() == "4b22979fdf5f813f36ea67b14f9bd63661ab4ec1c3f4c3b7c258a5c0d51e0ead"
+    p = subprocess.run(["ffprobe", "-v", "error", "-f", "mpeg", "-i", "pipe:0", "-show_packets", "-of", "json"], input=data, capture_output=True)
+    assert p.returncode == 0 and not p.stderr
+    packets = json.loads(p.stdout)["packets"]
+    print("logo_sha256", hashlib.sha256(data).hexdigest(), "last_packet", packets[-1])
+    for label, content in [("stored", data), ("aligned", aligned), ("minus_last_sector", data[:444416])]:
+        result = subprocess.run(["ffmpeg", "-v", "error", "-f", "mpeg", "-i", "pipe:0", "-f", "null", "-"], input=content, capture_output=True)
+        print(label, "exit", result.returncode, "diagnostic", result.stderr.decode(errors="replace").strip())
+        assert result.returncode == 0
+    # Sector truncation above is diagnostic only, never a production repair.
+
+
 if __name__ == "__main__":
-    probe()
+    import sys
+    verify_logo() if "--verify-logo" in sys.argv else probe()
