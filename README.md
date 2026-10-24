@@ -27,11 +27,11 @@ This is a partial independent implementation, not a verified drop-in recreation 
 engine. Archive/game detection, decryption keys, canvas sizes and startup scripts remain
 work-specific; they must not be removed just because UI layout is being consolidated.
 
-At the source-audit baseline, ef bypasses the runtime title screen and starts its entry script;
-Supipara and Trinoline still have runtime-rendered title menus. This is **not** global removal
-of native-style title UI. Save/load and the in-game menu are separate from the title screen.
-The host library is the intended launcher, but that design intent does not establish an
-implemented host replacement for every original menu function.
+All supported games now open directly into their configured entry script; the runtime no longer
+loads title artwork or routes title-menu clicks. The host library owns launching. Save/load and
+the in-game menu remain separate and are retained, including work-specific assets and geometry.
+This intentionally omits original title UI; it does not establish a host replacement for every
+original menu function or original-player parity.
 
 See the [integration audit](<research/ef-first-tale/INTEGRATION_AUDIT.md>) for the exact baseline,
 remaining fidelity gaps, save/ABI preservation boundaries and a focused removal plan.

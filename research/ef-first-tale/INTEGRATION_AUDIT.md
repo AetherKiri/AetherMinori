@@ -2,6 +2,10 @@
 
 Source audit, 2026-10-24. This records the pre-global-removal baseline inspected in this task, not an assertion that subsequent parent-agent edits have already shipped. No REA or game execution was used.
 
+## Current cleanup status
+
+After the baseline audit, the parent authorized global title removal. The runtime now has no `TitleProfile`, title resource/rectangle fields, `MainMenuAction`, title constructor/hit dispatch or `SceneKind::MainMenu`. All supported profiles use `script_only` and unconditional `start_new_game` after existing global-state restoration. The provider ABI table and its `get_main_menu_json: None` field remain intact. In-game save/load, menu assets and layout are retained. This fulfills **global runtime title UI removal**, not complete elimination of repeated non-title defaults or original-player parity. A new three-profile scene test checks generic startup without title assets and correct canvas size.
+
 ## Verdict at baseline
 
 **The requested global title-UI removal was not fulfilled.** Only ef opts out: `EF_PROFILE.ui.title = None`. Supipara and Trinoline still have `Some(TitleProfile)` with artwork and New/Load hit rectangles. The generic title implementation and input routes are active, not merely unused declarations.
@@ -20,7 +24,7 @@ Do not collapse everything into one profile: archive executable markers, archive
 
 ## Smallest proposed global title-removal patch
 
-This audit did **not** implement this production patch; it was sent to the parent for approval/implementation.
+The parent subsequently authorized this focused production patch. It has now been implemented as described below; this section preserves the reasoning behind the change.
 
 1. Delete `TitleProfile`, `UiProfile.title`, title resource/rectangle blocks and `has_title_screen`. Keep game identity/archive/startup/canvas and non-title UI fields.
 2. Always construct `SceneSystem::script_only` during `open_game`; call `start_new_game` after the existing reset/system-global load for every selected profile. Preserve language/start-script options and error propagation.
@@ -45,5 +49,5 @@ These are concrete limits, not a claim of exhaustive missing-feature discovery:
 
 - Corrected [README](<../../README.md>) identification (removed the unrelated WHITE ALBUM2 example and misleading external Minori link), and documented partial implementation/global-removal baseline.
 - With explicit parent permission, added the missing `ui.title.is_none()` and `!has_title_screen()` assertions to the existing ef title-named profile test. Previously its name was not backed by any title assertion. No production behavior, keys, save data or ABI was changed by this audit. Parent may replace these assertions with all-game startup tests when deleting the title type.
-- Attempted `cargo test --lib profile::tests -- --nocapture`: shell exit **127**, `cargo: command not found`. PATH lacked Rust tools; neither common `/root/.cargo/bin/cargo` nor `/usr/local/cargo/bin/cargo` existed. Tests are **not reported passed**.
+- Initial `cargo test --lib profile::tests -- --nocapture` attempt exited **127**, `cargo: command not found`. Parent supplied the installed toolchain path `/var/lib/dsh/.cargo/bin`; rerunning with that directory in PATH succeeded: `cargo test --all-targets`, exit **0**, **86 library tests passed, 2 local-installation tests ignored; 1 headless CLI test passed**. This includes the new all-profile script-scene test and existing save-grid/radial-menu/save-round-trip tests. It does not exercise provider `open_game` against all three real installations or constitute an end-to-end GUI save/load smoke test. `git diff --check` passed.
 - Metadata-only check confirmed the existing installation directory `/root/games/ef-first-tale/ef - the first tale` and its executable (2,048,104 bytes). No assets were extracted and no installation content was modified. Download/removal evidence was not investigated: it is unnecessary to decide the source-level title-removal question, and no deletion claim is made.

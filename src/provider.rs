@@ -12,7 +12,7 @@ use crate::persistence::{
     ManualSaveData, load_manual_slot, load_system_dat, save_manual_slot, save_system_dat,
 };
 use crate::profile::{GameProfile, detect_game_profile};
-use crate::scene::{Frame, GameMenuAction, MainMenuAction, SceneKind, SceneSystem};
+use crate::scene::{Frame, GameMenuAction, SceneKind, SceneSystem};
 use crate::script::{Language, Program};
 use crate::vfs::Vfs;
 use crate::vm::{
@@ -1018,15 +1018,8 @@ unsafe extern "C" fn open_game(opaque: *mut c_void, root: *const c_char, _: *con
         .ok_or_else(|| "no Minori game profile matches this installation".to_string())
         .and_then(|profile| {
             let vfs = Vfs::mount_game_with_profile(root_path, profile)?;
-            // Games with an in-engine title screen open on it. ef draws its title
-            // in native code, so its profile has none and the runtime goes
-            // straight to the script -- but the scene still has to exist, so it
-            // is built as an empty script scene.
-            let scene = if profile.has_title_screen() {
-                SceneSystem::main_menu(&vfs, profile)?
-            } else {
-                SceneSystem::script_only(profile)
-            };
+            // Launch directly into script execution for every game.
+            let scene = SceneSystem::script_only(profile);
             Ok((profile, vfs, scene))
         });
     match result {
@@ -1062,14 +1055,10 @@ unsafe extern "C" fn open_game(opaque: *mut c_void, root: *const c_char, _: *con
             runtime.scene = Some(scene);
             runtime.delivered_serial = 0;
             runtime.failed = false;
-            if !profile.has_title_screen() {
-                // No title screen: opening the game starts the story.
-                return match start_new_game(runtime) {
-                    Ok(()) => OK,
-                    Err(error) => runtime.fail(error, INVALID_STATE),
-                };
+            match start_new_game(runtime) {
+                Ok(()) => OK,
+                Err(error) => runtime.fail(error, INVALID_STATE),
             }
-            OK
         }
         Err(error) => runtime.fail(error, IO_ERROR),
     }
@@ -1820,27 +1809,6 @@ unsafe extern "C" fn send_input(opaque: *mut c_void, event: *const c_void) -> i3
     }
 
     if event.event_type == INPUT_POINTER_DOWN {
-        let main_action = runtime
-            .scene
-            .as_ref()
-            .and_then(|scene| scene.main_menu_action(event.x, event.y));
-        match main_action {
-            Some(MainMenuAction::NewGame) => {
-                return match start_new_game(runtime) {
-                    Ok(()) => OK,
-                    Err(error) => runtime.fail(error, INVALID_STATE),
-                };
-            }
-            Some(MainMenuAction::LoadGame) => {
-                return match open_load_menu(runtime) {
-                    Ok(()) => OK,
-                    Err(error) => runtime.fail(error, INVALID_STATE),
-                };
-            }
-            None => {}
-        }
-    }
-    if event.event_type == INPUT_POINTER_DOWN {
         let game_menu_action = match (&runtime.vfs, &mut runtime.scene) {
             (Some(vfs), Some(scene)) => scene.game_menu_pointer_down(vfs, event.x, event.y),
             _ => Ok(None),
@@ -1954,7 +1922,6 @@ unsafe extern "C" fn renderer_info(opaque: *mut c_void, output: *mut c_char, siz
         return INVALID_ARGUMENT;
     };
     let scene = match runtime.scene.as_ref().map(|scene| scene.current) {
-        Some(SceneKind::MainMenu) => "main_menu",
         Some(SceneKind::Script) => "script",
         None => "none",
     };
@@ -1987,7 +1954,6 @@ unsafe extern "C" fn debug_info(
             )
         });
     let scene = match runtime.scene.as_ref().map(|scene| scene.current) {
-        Some(SceneKind::MainMenu) => "main_menu",
         Some(SceneKind::Script) => "script",
         None => "none",
     };

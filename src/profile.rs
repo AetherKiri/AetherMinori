@@ -132,26 +132,12 @@ pub struct MessageWaitProfile {
     pub y: f64,
 }
 
-/// The in-engine main menu, when the game has one.
-///
-/// Only the games whose title screen is drawn by the runtime itself carry this.
-/// ef draws its title screen in native code and has none in the script corpus,
-/// so its profile leaves this as `None` and the game starts straight away --
-/// the host's own library UI is the launcher.
-#[derive(Debug)]
-pub struct TitleProfile {
-    pub background: &'static str,
-    pub new_game: LogicalRect,
-    pub load_game: LogicalRect,
-}
-
 /// Everything the runtime draws or lays out on the game's behalf.
 ///
-/// This is the part that used to be duplicated between game profiles even when
-/// the two games shared the same artwork and geometry.
+/// Non-title artwork and layout remain work-specific. Shared menu items are
+/// reused, but matching resource names alone do not imply matching geometry.
 #[derive(Debug)]
 pub struct UiProfile {
-    pub title: Option<TitleProfile>,
     pub message_panel: &'static str,
     /// How far below the bottom edge the panel is anchored. The panel art
     /// carries its own soft top edge, so the offset is part of the asset, not
@@ -175,11 +161,6 @@ pub struct GameProfile {
 impl GameProfile {
     pub fn matches_root(&self, root: &Path) -> bool {
         self.archive.matches_root(root)
-    }
-
-    /// True when the runtime owns the title screen and must show it first.
-    pub fn has_title_screen(&self) -> bool {
-        self.ui.title.is_some()
     }
 
     /// The drawing surface the game's script coordinates are expressed in.
@@ -377,21 +358,6 @@ pub static TRINOLINE_PROFILE: GameProfile = GameProfile {
     entry_script: "test.sc",
     canvas: crate::scene::Canvas::new(1280, 720),
     ui: UiProfile {
-        title: Some(TitleProfile {
-            background: "topmenu\\TopMenu.png",
-            new_game: LogicalRect {
-                left: 260.0,
-                top: 220.0,
-                right: 400.0,
-                bottom: 280.0,
-            },
-            load_game: LogicalRect {
-                left: 420.0,
-                top: 220.0,
-                right: 510.0,
-                bottom: 280.0,
-            },
-        }),
         message_panel: "msgPanel.png",
         message_panel_offset_y: 64,
         message_wait: MessageWaitProfile {
@@ -450,21 +416,6 @@ pub static SUPIPARA_PROFILE: GameProfile = GameProfile {
     entry_script: "test.sc",
     canvas: crate::scene::Canvas::new(1280, 720),
     ui: UiProfile {
-        title: Some(TitleProfile {
-            background: "topMenu1.png",
-            new_game: LogicalRect {
-                left: 1056.0,
-                top: 32.0,
-                right: 1280.0,
-                bottom: 64.0,
-            },
-            load_game: LogicalRect {
-                left: 1056.0,
-                top: 76.0,
-                right: 1280.0,
-                bottom: 112.0,
-            },
-        }),
         message_panel: "msgPanel.png",
         message_panel_offset_y: 64,
         message_wait: MessageWaitProfile {
@@ -524,9 +475,6 @@ pub static EF_PROFILE: GameProfile = GameProfile {
     entry_script: "test.sc",
     canvas: crate::scene::Canvas::new(800, 600),
     ui: UiProfile {
-        // The retail title screen is drawn by native code and the script
-        // corpus has no title script, so the runtime does not own one.
-        title: None,
         message_panel: "msgPanel.png",
         message_panel_offset_y: 0,
         message_wait: MessageWaitProfile {
@@ -598,18 +546,13 @@ mod tests {
     #[test]
     fn supipara_profile_keeps_work_specific_resources_out_of_the_core() {
         assert_eq!(SUPIPARA_PROFILE.entry_script, "test.sc");
-        let title = SUPIPARA_PROFILE.ui.title.as_ref().unwrap();
-        assert!(title.new_game.contains(1100.0, 48.0));
-        assert!(title.load_game.contains(1100.0, 96.0));
         assert_eq!(SUPIPARA_PROFILE.ui.game_menu.items.len(), 5);
         assert_eq!(SUPIPARA_PROFILE.archive.archive_keys.len(), 8);
         assert!(SUPIPARA_PROFILE.archive.archive_key("voice").is_some());
     }
 
     #[test]
-    fn ef_profile_has_no_in_engine_title_screen() {
-        assert!(EF_PROFILE.ui.title.is_none());
-        assert!(!EF_PROFILE.has_title_screen());
+    fn ef_profile_preserves_archive_scheme_and_keys() {
         assert_eq!(EF_ARCHIVE_PROFILE.archive_keys.len(), 8);
         let movie = EF_ARCHIVE_PROFILE.archive_key("mov").unwrap();
         assert_eq!(movie.password, Some("qmzj4Y9C"));

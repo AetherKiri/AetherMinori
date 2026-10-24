@@ -43,12 +43,6 @@ impl Default for Canvas {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MainMenuAction {
-    NewGame,
-    LoadGame,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameMenuAction {
     Consumed,
     Save,
@@ -70,7 +64,6 @@ pub struct Frame {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneKind {
-    MainMenu,
     Script,
 }
 
@@ -332,8 +325,8 @@ fn black_frame(canvas: Canvas) -> Frame {
 }
 
 impl SceneSystem {
-    /// A script scene with no artwork yet, for games whose title screen lives
-    /// outside the runtime. The first .stage call replaces it.
+    /// A script scene with no artwork yet. The host library owns launching;
+    /// the first .stage call replaces this empty surface for every game.
     pub fn script_only(profile: &'static GameProfile) -> Self {
         let canvas = profile.canvas();
         let frame = black_frame(canvas);
@@ -365,44 +358,6 @@ impl SceneSystem {
             frame_stills: Vec::new(),
             hsv_filter: HsvFilter::default(),
         }
-    }
-
-    pub fn main_menu(vfs: &Vfs, profile: &'static GameProfile) -> Result<Self, String> {
-        let title = profile
-            .ui
-            .title
-            .as_ref()
-            .ok_or("this game profile has no in-engine title screen")?;
-        let data = vfs.read(title.background)?;
-        let frame = decode_png(&data)?;
-        Ok(Self {
-            profile,
-            canvas: profile.canvas(),
-            current: SceneKind::MainMenu,
-            background_source: frame.clone(),
-            background_rgba: frame.rgba.clone(),
-            camera_x: 0,
-            camera_y: 0,
-            scroll: None,
-            shake: None,
-            effect_layers: None,
-            wscroll: None,
-            cutin: None,
-            frame,
-            characters: HashMap::new(),
-            panel: None,
-            panel_transition: None,
-            message_char_transitions: Vec::new(),
-            transition: None,
-            game_menu: None,
-            save_menu: None,
-            rand_state: 1,
-            particles: None,
-            screen_layers: Vec::new(),
-            overlay_layers: Vec::new(),
-            frame_stills: Vec::new(),
-            hsv_filter: HsvFilter::default(),
-        })
     }
 
     pub fn enter_script_scene(&mut self) {
@@ -485,22 +440,6 @@ impl SceneSystem {
             height: self.canvas.height,
             rgba,
             serial: self.frame.serial,
-        }
-    }
-
-    pub fn main_menu_action(&self, x: f64, y: f64) -> Option<MainMenuAction> {
-        if self.current != SceneKind::MainMenu {
-            return None;
-        }
-        let Some(title) = self.profile.ui.title.as_ref() else {
-            return None;
-        };
-        if title.new_game.contains(x, y) {
-            Some(MainMenuAction::NewGame)
-        } else if title.load_game.contains(x, y) {
-            Some(MainMenuAction::LoadGame)
-        } else {
-            None
         }
     }
 
@@ -3282,54 +3221,19 @@ mod tests {
     }
 
     #[test]
-    fn title_menu_maps_original_new_and_load_rows() {
-        let scene = SceneSystem {
-            profile: &SUPIPARA_PROFILE,
-            canvas: CANVAS,
-            current: SceneKind::MainMenu,
-            frame: Frame {
-                width: WIDTH,
-                height: HEIGHT,
-                rgba: Vec::new(),
-                serial: 1,
-            },
-            background_source: Frame {
-                width: WIDTH,
-                height: HEIGHT,
-                rgba: Vec::new(),
-                serial: 1,
-            },
-            background_rgba: Vec::new(),
-            camera_x: 0,
-            camera_y: 0,
-            scroll: None,
-            shake: None,
-            effect_layers: None,
-            wscroll: None,
-            cutin: None,
-            characters: HashMap::new(),
-            panel: None,
-            panel_transition: None,
-            message_char_transitions: Vec::new(),
-            transition: None,
-            game_menu: None,
-            save_menu: None,
-            rand_state: 1,
-            particles: None,
-            screen_layers: Vec::new(),
-            overlay_layers: Vec::new(),
-            frame_stills: Vec::new(),
-            hsv_filter: HsvFilter::default(),
-        };
-        assert_eq!(
-            scene.main_menu_action(1150.0, 48.0),
-            Some(MainMenuAction::NewGame)
-        );
-        assert_eq!(
-            scene.main_menu_action(1150.0, 96.0),
-            Some(MainMenuAction::LoadGame)
-        );
-        assert_eq!(scene.main_menu_action(900.0, 96.0), None);
+    fn every_game_starts_as_script_without_title_assets() {
+        for profile in [
+            &crate::profile::SUPIPARA_PROFILE,
+            &crate::profile::TRINOLINE_PROFILE,
+            &crate::profile::EF_PROFILE,
+        ] {
+            let scene = SceneSystem::script_only(profile);
+            assert_eq!(scene.current, SceneKind::Script);
+            assert_eq!(scene.frame().width, profile.canvas.width);
+            assert_eq!(scene.frame().height, profile.canvas.height);
+            assert_eq!(scene.frame().rgba.len(), profile.canvas.bytes());
+            assert!(!scene.game_menu_active());
+        }
     }
 
     #[test]
