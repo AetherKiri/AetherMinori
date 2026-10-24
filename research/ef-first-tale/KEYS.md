@@ -1,5 +1,10 @@
 # ef - the first tale: recovered key tables
 
+**Current status:** all eight archives now mount. Historical unresolved notes
+below are retained as discovery history; audio is resolved in AUDIO.md and movie
+index/payload prefix recovery is resolved in MOVIE.md. Movie uses negated key at
+0x1a7c00, not the originally assumed index slot 2; password qmzj4Y9C.
+
 Both tables live in `ef_first_AA.exe`, 8 x 32 bytes each, stored **negated**
 (`key[i] = (256 - byte) & 0xFF`). Reproduce them with:
 

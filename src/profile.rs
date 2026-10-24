@@ -189,6 +189,9 @@ impl GameProfile {
 }
 
 const EF_ARCHIVE_KEYS: &[ArchiveKeyProfile] = &[
+    // Movie index key is the negated executable bytes at 0x1a7c00. Payloads
+    // use the index's 256-byte table, not a Blowfish data key.
+    ArchiveKeyProfile { archive: "mov", index: "5A4CAF2034CC9510780CE2B9BAE97B9C2026274E7FDD36C58D10325F0337E1EA", password: Some("qmzj4Y9C"), data: None },
     ArchiveKeyProfile { archive: "bgm", index: "78E52F7768FA49EA1B0EF53F7B38014A835BC8C948EB78D0AB2688B85D46F307", password: Some("52AUwF8B"), data: Some("8B7731E7AA9DAE4C1F216750C32B9D395794B257C353A3C9DFA880733026D32B") },
     ArchiveKeyProfile { archive: "voice", index: "2FD5D774760B34126F7C3E964FE6CA4CFCDF6A730B891CB1618335270FEB79DF", password: Some("52AUwF8B"), data: Some("151694FDCF2CE124A14E6D1E46E1A7B17395C0CC172DA47CA3AD8CAE42043258") },
     ArchiveKeyProfile { archive: "se", index: "C3011A3ED51FCD2BD3904DD1772E469709B10D5DC0CB4652CFF5B3A57CDE9038", password: Some("52AUwF8B"), data: Some("3DCA17D9518DE518087077409C8BCB396A6BE53DA76E650238E09905096D1AA8") },
@@ -605,7 +608,10 @@ mod tests {
 
     #[test]
     fn ef_profile_has_no_in_engine_title_screen() {
-        assert_eq!(EF_ARCHIVE_PROFILE.archive_keys.len(), 7);
+        assert_eq!(EF_ARCHIVE_PROFILE.archive_keys.len(), 8);
+        let movie = EF_ARCHIVE_PROFILE.archive_key("mov").unwrap();
+        assert_eq!(movie.password, Some("qmzj4Y9C"));
+        assert!(movie.data.is_none());
         for archive in ["bgm", "voice", "se"] {
             let keys = EF_ARCHIVE_PROFILE.archive_key(archive).unwrap();
             assert_eq!(keys.password, Some("52AUwF8B"));

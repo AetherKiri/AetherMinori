@@ -128,6 +128,25 @@ impl PazArchive {
         self.entries.contains_key(&normalize(name))
     }
 
+    /// Decode an unpacked movie prefix without reading the whole movie.
+    /// Prefixes start at zero, preserving the repeating 64-KiB keystream phase.
+    pub fn read_movie_prefix(&self, name: &str, limit: usize) -> Result<Vec<u8>, String> {
+        let entry = self.entries.get(&normalize(name))
+            .ok_or_else(|| format!("{} not found in {}", name, self.stem))?;
+        let movie_key = self.movie_key.as_ref().ok_or("not a movie archive")?;
+        if entry.packed {
+            return Err("bounded reads of packed movies are unsupported".into());
+        }
+        let entry_key = entry.rc4_key.as_ref().ok_or("movie entry has no key")?;
+        let size = limit.min(entry.size as usize).min(entry.unpacked_size as usize);
+        let mut data = read_virtual(&self.path, &self.parts, entry.offset, size)?;
+        for value in &mut data {
+            *value ^= self.xor_key;
+        }
+        movie_decrypt(&mut data, movie_key, entry_key);
+        Ok(data)
+    }
+
     pub fn read(&self, name: &str) -> Result<Vec<u8>, String> {
         let entry = self
             .entries
@@ -482,6 +501,63 @@ impl Cursor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ef_movie_index_table_and_repeating_keystream() {
+        let mut index = 1u32.to_le_bytes().to_vec();
+        let table: Vec<u8> = (0..=255).collect();
+        index.extend_from_slice(&table);
+        index.extend_from_slice(b"Test.AVI\0");
+        index.extend_from_slice(&460u64.to_le_bytes());
+        for value in [131073u32, 131073, 131080, 0] {
+            index.extend_from_slice(&value.to_le_bytes());
+        }
+        let parsed = parse_index(&index, "mov", &crate::profile::EF_ARCHIVE_PROFILE).unwrap();
+        assert_eq!(parsed.movie_key.as_deref(), Some(table.as_slice()));
+        let key = parsed.entries["test.avi"].rc4_key.as_ref().unwrap();
+        assert_eq!(key, b"test.avi 00020001 qmzj4Y9C");
+        let mut data = vec![0; 131073];
+        movie_decrypt(&mut data, &table, key);
+        assert_eq!(&data[..65536], &data[65536..131072]);
+        assert_eq!(data[0], data[131072]);
+        let mut short = vec![0; 17];
+        movie_decrypt(&mut short, &table, key);
+        assert_eq!(short, data[..17]);
+        movie_decrypt(&mut [], &table, key);
+        assert!(parse_index(&index[..259], "mov", &crate::profile::EF_ARCHIVE_PROFILE).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires EF_GAME_ROOT; reads only four 64-KiB movie prefixes"]
+    fn ef_movie_local_headers_match_independent_probe() {
+        let root = std::env::var("EF_GAME_ROOT").expect("set EF_GAME_ROOT");
+        let mounted = Vfs::mount_game_with_archive_profile(&root, &crate::profile::EF_ARCHIVE_PROFILE).unwrap();
+        assert_eq!(mounted.entries().filter(|(stem, _)| *stem == "mov").count(), 4);
+        let arc = PazArchive::open_with_archive_profile(Path::new(&root).join("mov.paz"), &crate::profile::EF_ARCHIVE_PROFILE).unwrap();
+        for (name, size, crc) in [
+            ("op_logo.mpg", 446468u32, 0x3ffaaa25),
+            ("ef_first_sound.avi", 39668126, 0xbf874704),
+            ("ef_ED_sound.avi", 10658946, 0xd658d340),
+            ("ed_moji_test.avi", 229440, 0xb3b8983b),
+        ] {
+            let data = arc.read_movie_prefix(name, 65536).unwrap();
+            assert_eq!(data.len(), 65536);
+            assert_eq!(crc32fast::hash(&data), crc);
+            assert_eq!(arc.entries[&normalize(name)].unpacked_size, size);
+            if name.ends_with(".avi") {
+                assert_eq!(&data[..4], b"RIFF");
+                assert_eq!(&data[8..12], b"AVI ");
+                assert_eq!(u32::from_le_bytes(data[4..8].try_into().unwrap()) + 8, size);
+                assert_eq!(&data[12..16], b"LIST");
+                assert_eq!(&data[20..24], b"hdrl");
+            } else {
+                assert_eq!(&data[..4], &[0, 0, 1, 0xba]);
+                assert_eq!(&data[12..16], &[0, 0, 1, 0xbb]);
+            }
+            assert_eq!(arc.read_movie_prefix(name, 17).unwrap(), data[..17]);
+            assert!(arc.read_movie_prefix(name, 0).unwrap().is_empty());
+        }
+    }
 
     #[test]
     fn ef_audio_index_preserves_extensionless_voice_key() {
