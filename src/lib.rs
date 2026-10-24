@@ -1,8 +1,10 @@
 pub mod command;
+pub mod headless;
 pub mod persistence;
 pub mod profile;
 pub mod provider;
 pub mod scene;
 pub mod script;
+pub mod text;
 pub mod vfs;
 pub mod vm;

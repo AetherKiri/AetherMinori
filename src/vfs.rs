@@ -273,6 +273,7 @@ fn parse_index(
         let packed = cursor.i32()? != 0;
         let password = type_password(
             &name,
+            stem,
             matches!(stem, "bgm" | "se" | "voice"),
             packed,
             profile,
@@ -303,6 +304,7 @@ fn parse_index(
 
 fn type_password(
     name: &str,
+    archive: &str,
     audio: bool,
     packed: bool,
     profile: &ArchiveProfile,
@@ -310,10 +312,10 @@ fn type_password(
     if packed {
         return None;
     }
-    let passwords = profile.type_passwords;
     if profile.password_scheme == TypePasswordScheme::PerArchive {
-        return Some(passwords.png);
+        return profile.archive_key(archive).and_then(|keys| keys.password);
     }
+    let passwords = profile.type_passwords;
     let lower = name.to_ascii_lowercase();
     if lower.ends_with(".png") {
         Some(passwords.png)

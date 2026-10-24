@@ -33,78 +33,78 @@ const INPUT_KEY_DOWN: u32 = 5;
 
 #[repr(C)]
 pub struct EngineCreateDesc {
-    struct_size: u32,
-    api_version: u32,
-    writable_path_utf8: *const c_char,
-    cache_path_utf8: *const c_char,
-    user_data: *mut c_void,
-    reserved_u64: [u64; 4],
-    reserved_ptr: [*mut c_void; 4],
+    pub(crate) struct_size: u32,
+    pub(crate) api_version: u32,
+    pub(crate) writable_path_utf8: *const c_char,
+    pub(crate) cache_path_utf8: *const c_char,
+    pub(crate) user_data: *mut c_void,
+    pub(crate) reserved_u64: [u64; 4],
+    pub(crate) reserved_ptr: [*mut c_void; 4],
 }
 
 #[repr(C)]
 pub struct EngineFrameDesc {
-    struct_size: u32,
-    width: u32,
-    height: u32,
-    stride_bytes: u32,
-    pixel_format: u32,
-    frame_serial: u64,
-    reserved_u64: [u64; 4],
-    reserved_ptr: [*mut c_void; 4],
+    pub(crate) struct_size: u32,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) stride_bytes: u32,
+    pub(crate) pixel_format: u32,
+    pub(crate) frame_serial: u64,
+    pub(crate) reserved_u64: [u64; 4],
+    pub(crate) reserved_ptr: [*mut c_void; 4],
 }
 
 #[repr(C)]
 pub struct EngineInputEvent {
-    struct_size: u32,
-    event_type: u32,
-    timestamp_micros: u64,
-    x: f64,
-    y: f64,
-    delta_x: f64,
-    delta_y: f64,
-    pointer_id: i32,
-    button: i32,
-    key_code: i32,
-    modifiers: i32,
-    unicode_codepoint: u32,
-    reserved_u32: u32,
-    reserved_u64: [u64; 2],
-    reserved_ptr: [*mut c_void; 2],
+    pub(crate) struct_size: u32,
+    pub(crate) event_type: u32,
+    pub(crate) timestamp_micros: u64,
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) delta_x: f64,
+    pub(crate) delta_y: f64,
+    pub(crate) pointer_id: i32,
+    pub(crate) button: i32,
+    pub(crate) key_code: i32,
+    pub(crate) modifiers: i32,
+    pub(crate) unicode_codepoint: u32,
+    pub(crate) reserved_u32: u32,
+    pub(crate) reserved_u64: [u64; 2],
+    pub(crate) reserved_ptr: [*mut c_void; 2],
 }
 
 #[repr(C)]
 pub struct EngineOption {
-    key_utf8: *const c_char,
-    value_utf8: *const c_char,
-    reserved_u64: [u64; 2],
-    reserved_ptr: [*mut c_void; 2],
+    pub(crate) key_utf8: *const c_char,
+    pub(crate) value_utf8: *const c_char,
+    pub(crate) reserved_u64: [u64; 2],
+    pub(crate) reserved_ptr: [*mut c_void; 2],
 }
 
 #[repr(C)]
 pub struct EngineRuntimeHost {
-    struct_size: u32,
-    api_version: u32,
-    user_data: *mut c_void,
-    log: Option<unsafe extern "C" fn(*mut c_void, u32, *const c_char, *const c_char)>,
-    monotonic_time_micros: Option<unsafe extern "C" fn(*mut c_void) -> u64>,
-    platform_request: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char)>,
-    reserved_u64: [u64; 4],
-    reserved_ptr: [*mut c_void; 3],
+    pub(crate) struct_size: u32,
+    pub(crate) api_version: u32,
+    pub(crate) user_data: *mut c_void,
+    pub(crate) log: Option<unsafe extern "C" fn(*mut c_void, u32, *const c_char, *const c_char)>,
+    pub(crate) monotonic_time_micros: Option<unsafe extern "C" fn(*mut c_void) -> u64>,
+    pub(crate) platform_request: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char)>,
+    pub(crate) reserved_u64: [u64; 4],
+    pub(crate) reserved_ptr: [*mut c_void; 3],
 }
 
 type Unary = Option<unsafe extern "C" fn(*mut c_void) -> i32>;
 
 #[repr(C)]
 pub struct Provider {
-    struct_size: u32,
-    api_version: u32,
-    runtime_id_utf8: *const c_char,
-    display_name_utf8: *const c_char,
-    priority: i32,
-    provider_user_data: *mut c_void,
-    probe: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> i32>,
-    create: Option<
+    pub(crate) struct_size: u32,
+    pub(crate) api_version: u32,
+    pub(crate) runtime_id_utf8: *const c_char,
+    pub(crate) display_name_utf8: *const c_char,
+    pub(crate) priority: i32,
+    pub(crate) provider_user_data: *mut c_void,
+    pub(crate) probe: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> i32>,
+    pub(crate) create: Option<
         unsafe extern "C" fn(
             *mut c_void,
             *const EngineRuntimeHost,
@@ -112,38 +112,38 @@ pub struct Provider {
             *mut *mut c_void,
         ) -> i32,
     >,
-    destroy: Option<unsafe extern "C" fn(*mut c_void)>,
-    open_game: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> i32>,
-    tick: Option<unsafe extern "C" fn(*mut c_void, u32) -> i32>,
-    pause: Unary,
-    resume: Unary,
-    set_option: Option<unsafe extern "C" fn(*mut c_void, *const c_void) -> i32>,
-    set_surface_size: Option<unsafe extern "C" fn(*mut c_void, u32, u32) -> i32>,
-    get_frame_desc: Option<unsafe extern "C" fn(*mut c_void, *mut EngineFrameDesc) -> i32>,
-    read_frame_rgba: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> i32>,
-    get_godot_native_frame_texture:
+    pub(crate) destroy: Option<unsafe extern "C" fn(*mut c_void)>,
+    pub(crate) open_game: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> i32>,
+    pub(crate) tick: Option<unsafe extern "C" fn(*mut c_void, u32) -> i32>,
+    pub(crate) pause: Unary,
+    pub(crate) resume: Unary,
+    pub(crate) set_option: Option<unsafe extern "C" fn(*mut c_void, *const c_void) -> i32>,
+    pub(crate) set_surface_size: Option<unsafe extern "C" fn(*mut c_void, u32, u32) -> i32>,
+    pub(crate) get_frame_desc: Option<unsafe extern "C" fn(*mut c_void, *mut EngineFrameDesc) -> i32>,
+    pub(crate) read_frame_rgba: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> i32>,
+    pub(crate) get_godot_native_frame_texture:
         Option<unsafe extern "C" fn(*mut c_void, *mut u64, *mut u32, *mut u32, *mut u64) -> i32>,
-    get_host_native_window: Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> i32>,
-    get_host_native_view: Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> i32>,
-    send_input: Option<unsafe extern "C" fn(*mut c_void, *const c_void) -> i32>,
-    get_main_menu_json:
+    pub(crate) get_host_native_window: Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> i32>,
+    pub(crate) get_host_native_view: Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> i32>,
+    pub(crate) send_input: Option<unsafe extern "C" fn(*mut c_void, *const c_void) -> i32>,
+    pub(crate) get_main_menu_json:
         Option<unsafe extern "C" fn(*mut c_void, *mut c_char, u32, *mut u32) -> i32>,
-    activate_menu_item: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> i32>,
-    set_render_target_iosurface: Option<unsafe extern "C" fn(*mut c_void, u32, u32, u32) -> i32>,
-    set_render_target_surface:
+    pub(crate) activate_menu_item: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> i32>,
+    pub(crate) set_render_target_iosurface: Option<unsafe extern "C" fn(*mut c_void, u32, u32, u32) -> i32>,
+    pub(crate) set_render_target_surface:
         Option<unsafe extern "C" fn(*mut c_void, *mut c_void, u32, u32) -> i32>,
-    get_frame_rendered_flag: Option<unsafe extern "C" fn(*mut c_void, *mut u32) -> i32>,
-    get_renderer_info: Option<unsafe extern "C" fn(*mut c_void, *mut c_char, u32) -> i32>,
-    get_memory_stats: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32>,
-    get_plugin_debug_info:
+    pub(crate) get_frame_rendered_flag: Option<unsafe extern "C" fn(*mut c_void, *mut u32) -> i32>,
+    pub(crate) get_renderer_info: Option<unsafe extern "C" fn(*mut c_void, *mut c_char, u32) -> i32>,
+    pub(crate) get_memory_stats: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32>,
+    pub(crate) get_plugin_debug_info:
         Option<unsafe extern "C" fn(*mut c_void, *mut c_char, u32, *mut u32) -> i32>,
-    get_last_error: Option<unsafe extern "C" fn(*mut c_void) -> *const c_char>,
-    reserved_u64: [u64; 8],
-    submit_platform_response:
+    pub(crate) get_last_error: Option<unsafe extern "C" fn(*mut c_void) -> *const c_char>,
+    pub(crate) reserved_u64: [u64; 8],
+    pub(crate) submit_platform_response:
         Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> i32>,
-    get_text_input_state: Option<unsafe extern "C" fn(*mut c_void, *mut u32) -> i32>,
-    get_godot_presentation_state: Option<unsafe extern "C" fn(*mut c_void, *mut u32) -> i32>,
-    reserved_ptr: [*mut c_void; 5],
+    pub(crate) get_text_input_state: Option<unsafe extern "C" fn(*mut c_void, *mut u32) -> i32>,
+    pub(crate) get_godot_presentation_state: Option<unsafe extern "C" fn(*mut c_void, *mut u32) -> i32>,
+    pub(crate) reserved_ptr: [*mut c_void; 5],
 }
 
 struct Runtime {
@@ -174,6 +174,7 @@ struct Runtime {
     pending_save_slot: Option<u8>,
     persisted_globals: HashMap<String, i32>,
     language: Language,
+    start_script: Option<String>,
     scene: Option<SceneSystem>,
     error: CString,
     failed: bool,
@@ -721,11 +722,23 @@ impl Runtime {
         if name.is_empty() {
             return Ok(());
         }
-        let data = self
+        let data = match self
             .vfs
             .as_ref()
             .ok_or("game VFS is not mounted")?
-            .read(name)?;
+            .read(name)
+        {
+            Ok(data) => data,
+            // A missing voice clip is not fatal: the retail engine simply
+            // plays nothing and the line still advances. ef ships its voice
+            // archive separately, so an installation without it must still run.
+            Err(error) => {
+                self.error = safe_cstring(&error);
+                self.current_voice = None;
+                self.voice_lip = None;
+                return Ok(());
+            }
+        };
         self.request_audio(AudioHostRequest {
             slot: 1,
             name,
@@ -960,6 +973,7 @@ unsafe extern "C" fn create(
         pending_save_slot: None,
         persisted_globals: HashMap::new(),
         language: Language::default(),
+        start_script: None,
         scene: None,
         error: safe_cstring(""),
         failed: false,
@@ -1238,11 +1252,29 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
                             runtime.current_effect = Some(request);
                             runtime.effect_fading_out = false;
                         }
+                        // Snow / SnowH / Snow2, Sakura, Rain and RainH are
+                        // particle fields the scene owns; WScroll already went
+                        // through start_effect, so route the rest the same way
+                        // rather than rejecting them.
                         _ => {
-                            return runtime.fail(
-                                format!("unsupported effect kind: {}", request.kind),
-                                INVALID_STATE,
-                            );
+                            let result = runtime
+                                .vfs
+                                .as_ref()
+                                .ok_or_else(|| "game VFS is not mounted".to_string())
+                                .and_then(|vfs| {
+                                    runtime
+                                        .scene
+                                        .as_mut()
+                                        .ok_or_else(|| {
+                                            "scene system is not initialized".to_string()
+                                        })
+                                        .and_then(|scene| scene.start_effect(vfs, &request))
+                                });
+                            if let Err(error) = result {
+                                return runtime.fail(error, INVALID_STATE);
+                            }
+                            runtime.current_effect = Some(request);
+                            runtime.effect_fading_out = false;
                         }
                     },
                     VmEvent::ApplyChar(request) => {
@@ -1325,7 +1357,14 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
                                 .and_then(|vfs| vfs.read(&request.name));
                             let data = match result {
                                 Ok(data) => data,
-                                Err(error) => return runtime.fail(error, INVALID_STATE),
+                                // A missing track is not fatal: the engine skips
+                                // the play and the script runs on. bgm.paz is a
+                                // separate archive an installation may not have.
+                                Err(error) => {
+                                    runtime.error = safe_cstring(&error);
+                                    runtime.current_bgm = None;
+                                    continue;
+                                }
                             };
                             if let Err(error) = runtime.request_audio(AudioHostRequest {
                                 slot: 0,
@@ -1367,7 +1406,11 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
                                 .and_then(|vfs| vfs.read(&request.name));
                             let data = match result {
                                 Ok(data) => data,
-                                Err(error) => return runtime.fail(error, INVALID_STATE),
+                                // A missing sound effect is not fatal either.
+                                Err(error) => {
+                                    runtime.error = safe_cstring(&error);
+                                    continue;
+                                }
                             };
                             if let Err(error) = runtime.request_audio(AudioHostRequest {
                                 slot: host_slot,
@@ -1621,6 +1664,14 @@ unsafe extern "C" fn set_option(opaque: *mut c_void, option: *const c_void) -> i
             }
             None => runtime.fail(format!("unknown script language: {value}"), INVALID_ARGUMENT),
         },
+        // Which script a new game starts from. ef opens on test.sc, which
+        // chains straight into the common route; a host that wants to jump
+        // elsewhere (chapter select, debug entry point) sets this first.
+        "minori.start" | "start_script" => {
+            runtime.start_script = (!value.is_empty()).then_some(value);
+            runtime.error = safe_cstring("");
+            OK
+        }
         _ => OK,
     }
 }
@@ -1704,13 +1755,17 @@ fn decode_script(name: &str, bytes: &[u8]) -> Result<String, String> {
 fn start_new_game(runtime: &mut Runtime) -> Result<(), String> {
     let profile = runtime.profile.ok_or("game profile is not selected")?;
     let vfs = runtime.vfs.as_ref().ok_or("game VFS is not mounted")?;
-    let program = load_program(vfs, profile.entry_script, runtime.language)?;
+    let script = runtime
+        .start_script
+        .as_deref()
+        .unwrap_or(profile.entry_script);
+    let program = load_program(vfs, script, runtime.language)?;
     runtime
         .scene
         .as_mut()
         .ok_or("startup scene is not ready")?
         .enter_script_scene();
-    let mut vm = Vm::new(profile.entry_script, program);
+    let mut vm = Vm::new(script, program);
     vm.replace_globals(runtime.persisted_globals.clone());
     runtime.vm = Some(vm);
     runtime.error = safe_cstring("");
@@ -2166,6 +2221,17 @@ mod tests {
             "3\t/tmp/effect.ogg\t1\t100\t-100\teffect.ogg\t2\t10"
         );
     }
+}
+
+/// The provider descriptor, for in-process callers such as the headless
+/// harness. The Aether host reaches the same descriptor through
+/// `aetherkiri_minori_register_runtime_provider`.
+pub(crate) fn descriptor() -> &'static Provider {
+    unsafe { &*std::ptr::addr_of!(PROVIDER) }
+}
+
+pub(crate) const fn api_version() -> u32 {
+    API_VERSION
 }
 
 static mut PROVIDER: Provider = Provider {

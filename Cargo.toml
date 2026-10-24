@@ -12,6 +12,10 @@ name = "minori-vfs"
 path = "src/bin/minori_vfs.rs"
 
 [[bin]]
+name = "minori-headless"
+path = "src/bin/minori_headless.rs"
+
+[[bin]]
 name = "minori-script"
 path = "src/bin/minori_script.rs"
 
@@ -26,6 +30,8 @@ miniz_oxide = "0.9.1"
 png = "0.18.0"
 serde = { version = "1.0", features = ["derive"] }
 lewton = "0.10.2"
+ab_glyph = "0.2.32"
+ttf-parser = "0.25.1"
 
 [profile.dev]
 opt-level = 2

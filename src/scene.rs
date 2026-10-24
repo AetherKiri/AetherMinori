@@ -269,6 +269,23 @@ struct SaveMenuState {
     load: bool,
 }
 
+/// A falling-particle field, used by the Snow / Sakura / Rain effects.
+#[derive(Debug)]
+struct ParticleState {
+    sprite: Frame,
+    flakes: Vec<Particle>,
+    horizontal_drift: i32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Particle {
+    x: f64,
+    y: f64,
+    speed: f64,
+    sway: f64,
+    phase: f64,
+}
+
 #[derive(Debug)]
 pub struct SceneSystem {
     profile: &'static GameProfile,
@@ -291,6 +308,7 @@ pub struct SceneSystem {
     transition: Option<TransitionState>,
     game_menu: Option<GameMenuState>,
     save_menu: Option<SaveMenuState>,
+    particles: Option<ParticleState>,
     screen_layers: Vec<Frame>,
     overlay_layers: Vec<Frame>,
     frame_stills: Vec<Frame>,
@@ -340,6 +358,7 @@ impl SceneSystem {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            particles: None,
             screen_layers: Vec::new(),
             overlay_layers: Vec::new(),
             frame_stills: Vec::new(),
@@ -377,6 +396,7 @@ impl SceneSystem {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            particles: None,
             screen_layers: Vec::new(),
             overlay_layers: Vec::new(),
             frame_stills: Vec::new(),
@@ -764,6 +784,9 @@ impl SceneSystem {
                 });
                 Ok(())
             }
+            "Snow" | "SnowH" | "Snow2" => self.start_particles(vfs, request),
+            "Sakura" => self.start_particles_for(vfs, request, "sakura"),
+            "Rain" | "RainH" => self.start_particles_for(vfs, request, "rain"),
             kind => Err(format!("effect rendering is not implemented: {kind}")),
         }
     }
@@ -800,7 +823,42 @@ impl SceneSystem {
         }
     }
 
+    /// The Snow family: a field of falling particles drawn from a sprite in
+    /// sys.paz. The engine keeps three sprite sizes (snowS/M/L.png, 8, 16 and
+    /// 24 px) and the taller variants use the larger sprites with more drift.
+    fn start_particles(&mut self, vfs: &Vfs, request: &EffectRequest) -> Result<(), String> {
+        let heavy = request.kind.ends_with('H') || request.kind.starts_with("Snow2");
+        let size = if heavy { "L" } else { "M" };
+        let sprite = decode_png(&vfs.read(&format!("snow{size}.png"))?)?;
+        let count = if heavy { 220 } else { 160 };
+        let drift = if heavy { 24 } else { 10 };
+        self.particles = Some(ParticleState {
+            sprite,
+            flakes: seed_particles(self.canvas, count, drift),
+            horizontal_drift: drift,
+        });
+        self.render_panel_frame();
+        Ok(())
+    }
+
+    fn start_particles_for(
+        &mut self,
+        vfs: &Vfs,
+        _request: &EffectRequest,
+        family: &str,
+    ) -> Result<(), String> {
+        let sprite = decode_png(&vfs.read(&format!("{family}M.png"))?)?;
+        self.particles = Some(ParticleState {
+            sprite,
+            flakes: seed_particles(self.canvas, 160, 12),
+            horizontal_drift: 12,
+        });
+        self.render_panel_frame();
+        Ok(())
+    }
+
     pub fn clear_effect(&mut self) -> Result<(), String> {
+        self.particles = None;
         self.wscroll = None;
         self.cutin = None;
         self.background_rgba =
@@ -810,6 +868,11 @@ impl SceneSystem {
     }
 
     pub fn tick_effect(&mut self, delta_ms: u32) -> Result<(), String> {
+        if self.particles.is_some() {
+            advance_particles(self.canvas, self.particles.as_mut().unwrap(), delta_ms);
+            self.render_panel_frame();
+            return Ok(());
+        }
         if self.cutin.is_some() {
             return self.tick_cutin(delta_ms);
         }
@@ -1107,8 +1170,12 @@ impl SceneSystem {
 
     pub fn apply_panel(&mut self, vfs: &Vfs, request: &PanelRequest) -> Result<(), String> {
         let new = match request.mode {
+            // 0 and 7 hide the panel. 1, 2 and 3 all show it; 2 and 3 are the
+            // ef-era variants that re-show the panel over a changed stage
+            // (mode 2 is used right after a faded-out effect, mode 3 opens a
+            // scene), so they resolve to the same artwork.
             0 | 7 => None,
-            1 | 2 => {
+            1 | 2 | 3 => {
                 let name = if request.image.is_empty() {
                     self.profile.ui.message_panel
                 } else {
@@ -1351,9 +1418,16 @@ impl SceneSystem {
         Ok(())
     }
 
+    fn panel_offset_y(&self) -> u32 {
+        self.profile.ui.message_panel_offset_y
+    }
+
     fn refresh_composed_frame(&mut self) {
         let mut composed =
             compose_characters(self.canvas, &self.background_rgba, &self.characters);
+        if let Some(particles) = self.particles.as_ref() {
+            composite_particles(self.canvas, &mut composed, particles);
+        }
         composite_layers(
             self.canvas,
             &mut composed,
@@ -1364,6 +1438,7 @@ impl SceneSystem {
         apply_hsv_filter_to(self.canvas, &mut composed, self.hsv_filter);
         composite_panel_state(
             self.canvas,
+            self.panel_offset_y(),
             &mut composed,
             self.panel_transition.as_ref(),
             self.panel.as_ref(),
@@ -1377,16 +1452,20 @@ impl SceneSystem {
     }
 
     fn freeze_characters(&mut self) {
-        let composed = freeze_character_layers(self.canvas, &self.background_rgba, &mut self.characters);
+        let mut composed =
+            freeze_character_layers(self.canvas, &self.background_rgba, &mut self.characters);
+        if let Some(particles) = self.particles.as_ref() {
+            composite_particles(self.canvas, &mut composed, particles);
+        }
         if let Some(transition) = self.transition.as_mut() {
             transition.new_rgba = composed;
             return;
         }
         self.frame.rgba = composed;
         if let Some(transition) = self.panel_transition.as_ref() {
-            render_panel_transition(self.canvas, &mut self.frame.rgba, transition);
+            render_panel_transition(self.canvas, self.panel_offset_y(), &mut self.frame.rgba, transition);
         } else if let Some(panel) = &self.panel {
-            composite_panel(self.canvas, &mut self.frame.rgba, panel, 255);
+            composite_panel(self.canvas, self.panel_offset_y(), &mut self.frame.rgba, panel, 255);
         }
         self.frame.serial = self.frame.serial.saturating_add(1);
     }
@@ -1507,6 +1586,7 @@ impl SceneSystem {
         let mut composed = compose_characters(self.canvas, &self.background_rgba, &self.characters);
         composite_panel_state(
             self.canvas,
+            self.panel_offset_y(),
             &mut composed,
             self.panel_transition.as_ref(),
             self.panel.as_ref(),
@@ -1566,6 +1646,7 @@ impl SceneSystem {
         let mut target_rgba = compose_characters(self.canvas, &self.background_rgba, &self.characters);
         composite_panel_state(
             self.canvas,
+            self.panel_offset_y(),
             &mut target_rgba,
             self.panel_transition.as_ref(),
             self.panel.as_ref(),
@@ -1649,6 +1730,7 @@ impl SceneSystem {
         self.frame.rgba = compose_characters(self.canvas, &self.background_rgba, &self.characters);
         composite_panel_state(
             self.canvas,
+            self.panel_offset_y(),
             &mut self.frame.rgba,
             self.panel_transition.as_ref(),
             self.panel.as_ref(),
@@ -1676,6 +1758,91 @@ impl SceneSystem {
             rgba,
             serial: self.frame.serial.saturating_add(1),
         };
+    }
+}
+
+/// Deterministic initial particle field. The original seeds from its own RNG,
+/// but a fixed pseudo-random spread keeps acceptance frames reproducible while
+/// looking identical to the eye.
+fn seed_particles(canvas: Canvas, count: usize, drift: i32) -> Vec<Particle> {
+    let mut state = 0x1234_5678u32;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        state
+    };
+    (0..count)
+        .map(|_| {
+            let x = f64::from(next() % canvas.width.max(1));
+            let y = f64::from(next() % canvas.height.max(1));
+            let speed = 20.0 + f64::from(next() % 40);
+            let sway = if drift > 0 {
+                f64::from((next() % 100) as i32 - 50) / 50.0
+            } else {
+                0.0
+            };
+            Particle {
+                x,
+                y,
+                speed,
+                sway,
+                phase: f64::from(next() % 628) / 100.0,
+            }
+        })
+        .collect()
+}
+
+fn advance_particles(canvas: Canvas, state: &mut ParticleState, delta_ms: u32) {
+    let seconds = f64::from(delta_ms) / 1000.0;
+    let height = f64::from(canvas.height);
+    let width = f64::from(canvas.width);
+    let drift = f64::from(state.horizontal_drift);
+    for particle in &mut state.flakes {
+        particle.y += particle.speed * seconds;
+        particle.phase += seconds * 2.0;
+        particle.x += (particle.sway * drift * seconds) + particle.phase.sin() * 0.4;
+        if particle.y > height {
+            particle.y -= height;
+        }
+        if particle.x < -8.0 {
+            particle.x += width + 16.0;
+        } else if particle.x > width + 8.0 {
+            particle.x -= width + 16.0;
+        }
+    }
+}
+
+fn composite_particles(canvas: Canvas, output: &mut [u8], state: &ParticleState) {
+    let sprite = &state.sprite;
+    for particle in &state.flakes {
+        let left = particle.x.round() as i32;
+        let top = particle.y.round() as i32;
+        for row in 0..sprite.height as i32 {
+            let y = top + row;
+            if !(0..canvas.height as i32).contains(&y) {
+                continue;
+            }
+            for column in 0..sprite.width as i32 {
+                let x = left + column;
+                if !(0..canvas.width as i32).contains(&x) {
+                    continue;
+                }
+                let source = ((row as u32 * sprite.width + column as u32) * 4) as usize;
+                let alpha = u32::from(sprite.rgba[source + 3]);
+                if alpha == 0 {
+                    continue;
+                }
+                let target = ((y as u32 * canvas.width + x as u32) * 4) as usize;
+                let inverse = 255 - alpha;
+                for channel in 0..3 {
+                    output[target + channel] = ((u32::from(sprite.rgba[source + channel]) * alpha
+                        + u32::from(output[target + channel]) * inverse)
+                        / 255) as u8;
+                }
+                output[target + 3] = 255;
+            }
+        }
     }
 }
 
@@ -2579,32 +2746,42 @@ fn game_menu_hit(
 
 fn composite_panel_state(
     canvas: Canvas,
+    offset_y: u32,
     output: &mut [u8],
     transition: Option<&PanelTransition>,
     panel: Option<&Frame>,
 ) {
     if let Some(transition) = transition {
-        render_panel_transition(canvas, output, transition);
+        render_panel_transition(canvas, offset_y, output, transition);
     } else if let Some(panel) = panel {
-        composite_panel(canvas, output, panel, 255);
+        composite_panel(canvas, offset_y, output, panel, 255);
     }
 }
 
-fn render_panel_transition(canvas: Canvas, output: &mut [u8], transition: &PanelTransition) {
+fn render_panel_transition(
+    canvas: Canvas,
+    offset_y: u32,
+    output: &mut [u8],
+    transition: &PanelTransition,
+) {
     let ticks = transition.elapsed_ms / 10;
     let progress = transition.speed.saturating_mul(ticks).min(255) as u8;
     if let Some(old) = &transition.old {
-        composite_panel(canvas, output, old, 255 - progress);
+        composite_panel(canvas, offset_y, output, old, 255 - progress);
     }
     if let Some(new) = &transition.new {
-        composite_panel(canvas, output, new, progress);
+        composite_panel(canvas, offset_y, output, new, progress);
     }
 }
 
 fn composite_panel(
     canvas: Canvas,
-    output: &mut [u8], panel: &Frame, opacity: u8) {
-    let top = canvas.height as i32 - panel.height as i32 + 64;
+    offset_y: u32,
+    output: &mut [u8],
+    panel: &Frame,
+    opacity: u8,
+) {
+    let top = canvas.height as i32 - panel.height as i32 + offset_y as i32;
     for source_y in 0..panel.height as i32 {
         let target_y = top + source_y;
         if !(0..canvas.height as i32).contains(&target_y) {
@@ -3094,6 +3271,7 @@ mod tests {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            particles: None,
             screen_layers: Vec::new(),
             overlay_layers: Vec::new(),
             frame_stills: Vec::new(),
@@ -3158,7 +3336,7 @@ mod tests {
             serial: 0,
         };
         let mut output = vec![0; (WIDTH * HEIGHT * 4) as usize];
-        composite_panel_state(CANVAS, &mut output, None, Some(&panel));
+        composite_panel_state(CANVAS, 64, &mut output, None, Some(&panel));
         let bottom_left = ((HEIGHT - 1) * WIDTH * 4) as usize;
         assert_eq!(&output[bottom_left..bottom_left + 4], &[255, 255, 255, 255]);
         let previous_left = bottom_left - (WIDTH * 4) as usize;
@@ -3215,6 +3393,7 @@ mod tests {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            particles: None,
             screen_layers: Vec::new(),
             overlay_layers: Vec::new(),
             frame_stills: Vec::new(),
@@ -3337,6 +3516,7 @@ mod tests {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            particles: None,
             screen_layers: Vec::new(),
             overlay_layers: Vec::new(),
             frame_stills: Vec::new(),
@@ -3394,6 +3574,7 @@ mod tests {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            particles: None,
             screen_layers: Vec::new(),
             overlay_layers: Vec::new(),
             frame_stills: Vec::new(),
@@ -3991,6 +4172,7 @@ mod tests {
             game_menu: None,
             save_menu: None,
             rand_state: 1,
+            particles: None,
             screen_layers: Vec::new(),
             overlay_layers: Vec::new(),
             frame_stills: Vec::new(),

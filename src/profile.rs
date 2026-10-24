@@ -5,6 +5,8 @@ pub struct ArchiveKeyProfile {
     pub archive: &'static str,
     pub index: &'static str,
     pub data: Option<&'static str>,
+    /// The entry password for archives that use one password for everything.
+    pub password: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -151,6 +153,10 @@ pub struct TitleProfile {
 pub struct UiProfile {
     pub title: Option<TitleProfile>,
     pub message_panel: &'static str,
+    /// How far below the bottom edge the panel is anchored. The panel art
+    /// carries its own soft top edge, so the offset is part of the asset, not
+    /// a layout constant.
+    pub message_panel_offset_y: u32,
     pub message_wait: MessageWaitProfile,
     pub game_menu: GameMenuProfile,
     pub save_load: SaveLoadProfile,
@@ -183,10 +189,10 @@ impl GameProfile {
 }
 
 const EF_ARCHIVE_KEYS: &[ArchiveKeyProfile] = &[
-    ArchiveKeyProfile { archive: "scr", index: "72634E755D2C980B205F82828BDE4379F37BD2B66D4390B6436A4D9F8389CA5A", data: Some("B7D2955CF7A0D3ECC20CCBF887A8C1B6D498ECF5F9B8361E897E4DBC7BAD1465") },
-    ArchiveKeyProfile { archive: "bg",  index: "8C7919517E51A0FD8348DC85CB68858E68905BD7D5B96336EA3699C15B683F83", data: Some("CA3C7817E1C631E5F88DE7AFF702A3697CB9D5E337E54EDA45546C2910C75FDE") },
-    ArchiveKeyProfile { archive: "st",  index: "B891BB7B469812FE98CC267BF1356131C694D340D79D8CD10DB45C5D81C44A9C", data: Some("630BDF10C9E57EF99126B50476F59800240CD1B3766A1416E31EBFEE27694F93") },
-    ArchiveKeyProfile { archive: "sys", index: "0112C9880D9DD23A0573BAC209226D0E80A8AE1EF8B33A76494962531BD1110B", data: Some("FD399525E2B2762FF9BC115DD145F6EB9E6DE3574574D04BCD21146BE6537951") },
+    ArchiveKeyProfile { archive: "scr", index: "72634E755D2C980B205F82828BDE4379F37BD2B66D4390B6436A4D9F8389CA5A", password: Some("102ycz1s"), data: Some("B7D2955CF7A0D3ECC20CCBF887A8C1B6D498ECF5F9B8361E897E4DBC7BAD1465") },
+    ArchiveKeyProfile { archive: "bg",  index: "8C7919517E51A0FD8348DC85CB68858E68905BD7D5B96336EA3699C15B683F83", password: Some("a7b77qgx"), data: Some("CA3C7817E1C631E5F88DE7AFF702A3697CB9D5E337E54EDA45546C2910C75FDE") },
+    ArchiveKeyProfile { archive: "st",  index: "B891BB7B469812FE98CC267BF1356131C694D340D79D8CD10DB45C5D81C44A9C", password: Some("a7b77qgx"), data: Some("630BDF10C9E57EF99126B50476F59800240CD1B3766A1416E31EBFEE27694F93") },
+    ArchiveKeyProfile { archive: "sys", index: "0112C9880D9DD23A0573BAC209226D0E80A8AE1EF8B33A76494962531BD1110B", password: Some("a7b77qgx"), data: Some("FD399525E2B2762FF9BC115DD145F6EB9E6DE3574574D04BCD21146BE6537951") },
 ];
 
 pub static EF_ARCHIVE_PROFILE: ArchiveProfile = ArchiveProfile {
@@ -206,42 +212,42 @@ const SUPIPARA_ARCHIVE_KEYS: &[ArchiveKeyProfile] = &[
     ArchiveKeyProfile {
         archive: "sys",
         index: "DC2EA1EA00FEA73CCB10E86DC56FCEB026A9C31CE2315BFB5C8F6FD6973B8E83",
-        data: Some("E6AF033FB4191EBA5A06709EB7FD482917E08DE670C7E5B5B82224C2C8F3A76F"),
+        password: None, data: Some("E6AF033FB4191EBA5A06709EB7FD482917E08DE670C7E5B5B82224C2C8F3A76F"),
     },
     ArchiveKeyProfile {
         archive: "scr",
         index: "3F6BD315E116186C16C520D9634D69A966E93223D1032D333B72D9CA01569DC2",
-        data: Some("67409C9A2A59ABC9FDD27755C832ED2107A8F5B15FC4FCF90B707B5FD04B92F8"),
+        password: None, data: Some("67409C9A2A59ABC9FDD27755C832ED2107A8F5B15FC4FCF90B707B5FD04B92F8"),
     },
     ArchiveKeyProfile {
         archive: "bg",
         index: "3EEEE8E90D94AAB6AA162783107F617905AC8F8A9AEFC38C05B6A7A1D64A2127",
-        data: Some("442844CAF0466C67613310F16990D9258BB8FE05E41DFA1234D3AED5FAA5F615"),
+        password: None, data: Some("442844CAF0466C67613310F16990D9258BB8FE05E41DFA1234D3AED5FAA5F615"),
     },
     ArchiveKeyProfile {
         archive: "st",
         index: "972F3265474FDA1D7F2896135690716C15788941DAE332CC0BA151C88712BE82",
-        data: Some("397F9CAEE01FF67AF70BAC717BAA14D0CE0DA7BCAFC5CF3A926BFA464186AA8D"),
+        password: None, data: Some("397F9CAEE01FF67AF70BAC717BAA14D0CE0DA7BCAFC5CF3A926BFA464186AA8D"),
     },
     ArchiveKeyProfile {
         archive: "bgm",
         index: "E0E3A1A338FAB67CE04B09D79219B17611CC9A6BC306D101B8A62EB2802FD069",
-        data: Some("E6697893B71850FC28B28B43A4B3DE789825784D4F6A787A344150E46C317F73"),
+        password: None, data: Some("E6697893B71850FC28B28B43A4B3DE789825784D4F6A787A344150E46C317F73"),
     },
     ArchiveKeyProfile {
         archive: "se",
         index: "DE4699D80BF8EC5890B8752CA68B6C94474AECD71EF5DC989A67C61414D8460A",
-        data: Some("5AA4666FAE80E8AFE70CC0AA81F522E1C861CE7E0B0AB2B06EC68155F0E20834"),
+        password: None, data: Some("5AA4666FAE80E8AFE70CC0AA81F522E1C861CE7E0B0AB2B06EC68155F0E20834"),
     },
     ArchiveKeyProfile {
         archive: "voice",
         index: "72EFDF542ECD672CA1DFF05D1F753FA33C3F270A99E1919CC99DFDF086FAB3E8",
-        data: Some("963A964FF9784A657D8621929C1502F8339926F1E33996A7935FDFA653FFA1A4"),
+        password: None, data: Some("963A964FF9784A657D8621929C1502F8339926F1E33996A7935FDFA653FFA1A4"),
     },
     ArchiveKeyProfile {
         archive: "mov",
         index: "102CCE3EB7B6694BD1ADBEC6D675245D643A32A0DF18A922A952468B249225BA",
-        data: None,
+        password: None, data: None,
     },
 ];
 
@@ -263,42 +269,42 @@ const TRINOLINE_ARCHIVE_KEYS: &[ArchiveKeyProfile] = &[
     ArchiveKeyProfile {
         archive: "bg",
         index: "955FC5ACAA293514A2B75A8A9D06543CE75B22BBFA57BD049762FC07D4232F7F",
-        data: Some("5B81450BC03E5E1510A0CC66C41AC8047C5A4C05B05C419C8A13088259033CE2"),
+        password: None, data: Some("5B81450BC03E5E1510A0CC66C41AC8047C5A4C05B05C419C8A13088259033CE2"),
     },
     ArchiveKeyProfile {
         archive: "bgm",
         index: "B90688022DAA47DA531AD6A181CCB10EDB05604E8A6C8DFF010E2DD9E9355158",
-        data: Some("43778DDEB785AD88BA47EC887D80ADDE00FED2531A868F151CD10AB5611209CA"),
+        password: None, data: Some("43778DDEB785AD88BA47EC887D80ADDE00FED2531A868F151CD10AB5611209CA"),
     },
     ArchiveKeyProfile {
         archive: "mov",
         index: "9C49892514D8BE366A529ECEE68801BAF9B7B3720EF23F81C0EECAF0D05CD96E",
-        data: None,
+        password: None, data: None,
     },
     ArchiveKeyProfile {
         archive: "scr",
         index: "B3B3E21EEE2CA5CA220358256DB6033CD4257D06B89637654AEA1C6283B8436E",
-        data: Some("FB8E18A6FDE6CFFFB366027EE508F10017477713112E34D732377721F8505653"),
+        password: None, data: Some("FB8E18A6FDE6CFFFB366027EE508F10017477713112E34D732377721F8505653"),
     },
     ArchiveKeyProfile {
         archive: "se",
         index: "0479A5EC44A8BF0CA5D3702D4C9DF27F86B85D19FE12778748BEAD2FAC5D3155",
-        data: Some("5E37BB71679A7A654F468FF9D59F46E604186F09FC7D42F4B8231BAA854FBBE2"),
+        password: None, data: Some("5E37BB71679A7A654F468FF9D59F46E604186F09FC7D42F4B8231BAA854FBBE2"),
     },
     ArchiveKeyProfile {
         archive: "st",
         index: "EC7EABF7F19EE3E0466DC3BFC04D945A3BE3B7F950878E7C69146F34EF9DAAAA",
-        data: Some("B955B50065E91822A6A9708366519E4AA5F6C86D671EB286DFB778F7BFD4EEB4"),
+        password: None, data: Some("B955B50065E91822A6A9708366519E4AA5F6C86D671EB286DFB778F7BFD4EEB4"),
     },
     ArchiveKeyProfile {
         archive: "sys",
         index: "F6DBE06AFD38B69695438F3D10F0BF7578C3462697BA1A4ECCDDE1B88CC57BB9",
-        data: Some("5B934AEDFC8687438DA7015C9933E525A1EF96FFF49E8784B0DB48586F49F9AC"),
+        password: None, data: Some("5B934AEDFC8687438DA7015C9933E525A1EF96FFF49E8784B0DB48586F49F9AC"),
     },
     ArchiveKeyProfile {
         archive: "voice",
         index: "2CA40C776100657BCBD15085F737718AA69C475F00FCD9D0C206E52D07FC1C34",
-        data: Some("BC60BE1B82807E1E886FAB45E9ECDBD3FD301ECDA7D7D3E639EA54DAE53325B4"),
+        password: None, data: Some("BC60BE1B82807E1E886FAB45E9ECDBD3FD301ECDA7D7D3E639EA54DAE53325B4"),
     },
 ];
 
@@ -381,6 +387,7 @@ pub static TRINOLINE_PROFILE: GameProfile = GameProfile {
             },
         }),
         message_panel: "msgPanel.png",
+        message_panel_offset_y: 64,
         message_wait: MessageWaitProfile {
             resource: "pauseAnimeNextPage.png",
             frames: 9,
@@ -453,6 +460,7 @@ pub static SUPIPARA_PROFILE: GameProfile = GameProfile {
             },
         }),
         message_panel: "msgPanel.png",
+        message_panel_offset_y: 64,
         message_wait: MessageWaitProfile {
             resource: "pauseAnimeNextPage.png",
             frames: 9,
@@ -514,6 +522,7 @@ pub static EF_PROFILE: GameProfile = GameProfile {
         // corpus has no title script, so the runtime does not own one.
         title: None,
         message_panel: "msgPanel.png",
+        message_panel_offset_y: 0,
         message_wait: MessageWaitProfile {
             resource: "pauseAnimeNextPage.png",
             frames: 9,
