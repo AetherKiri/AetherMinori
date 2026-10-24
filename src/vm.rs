@@ -391,6 +391,17 @@ impl Vm {
         }
     }
 
+    /// Local variables as the scripts see them, for diagnostics.
+    pub fn local_variables(&self) -> Vec<(&str, i32)> {
+        let mut pairs: Vec<(&str, i32)> = self
+            .locals
+            .iter()
+            .map(|(name, value)| (name.as_str(), *value))
+            .collect();
+        pairs.sort_unstable();
+        pairs
+    }
+
     pub fn complete_select(&mut self, index: usize) -> Result<(), String> {
         let VmState::WaitingSelect { labels } = &self.state else {
             return Err("select response received while VM is not waiting".into());
@@ -1116,8 +1127,10 @@ impl Vm {
             "<=" => left <= right,
             operator => return Err(format!("unsupported if operator {operator}")),
         };
-        // CommandIf::execute at 0x449010 falls through when true and jumps on false.
-        if !condition {
+        // ef scripts use complementary guards followed by their named labels
+        // (e.g. 108_01.sc: favMiyako > 0 -> miyakotrue). Jump on true.
+        // The historical 0x449010 annotation belongs to a different binary.
+        if condition {
             self.jump(&arguments[3])?;
         }
         Ok(())
@@ -1607,6 +1620,47 @@ mod tests {
     }
 
     #[test]
+    fn affection_counter_set_after_a_select_reaches_the_next_script() {
+        // 107_04.sc: .select 去接宫子:label1 优先工作:label2 / .label label1 /
+        // .set favMiyako = favMiyako + 1 / .chain 107_05.sc
+        let first = program(".select GO:label1 WORK:label2
+.label label1
+.set favMiyako = favMiyako + 1
+.chain middle.sc
+.label label2
+.end");
+        let mut vm = Vm::new("first.sc", first);
+        let scripts = |name: &str| match name {
+            "middle.sc" => Ok(program(".wait 10
+.chain gate.sc")),
+            "gate.sc" => Ok(program(".if favMiyako > 0 TRUE
+.if favMiyako <= 0 FALSE
+.label TRUE
+.chain high.sc
+.label FALSE
+.chain low.sc")),
+            "high.sc" => Ok(program(".set reached = 1\n.end")),
+            "low.sc" => Ok(program(".set reached = -1\n.end")),
+            other => Err(format!("unexpected script {other}")),
+        };
+        let mut chose = false;
+        for _ in 0..40 {
+            if vm.state() == &VmState::Finished {
+                break;
+            }
+            if let VmState::WaitingSelect { .. } = vm.state() {
+                if !chose {
+                    vm.complete_select(0).unwrap();
+                    chose = true;
+                }
+            }
+            vm.tick(20, scripts).unwrap();
+        }
+        assert_eq!(vm.local("favMiyako"), Some(1));
+        assert_eq!(vm.local("reached"), Some(1), "the high-affection branch should have run");
+    }
+
+    #[test]
     fn local_variables_survive_a_chain() {
         // 107_04.sc sets favMiyako and chains; 108_01.sc reads it later.
         let mut vm = Vm::new("first.sc", program(".set favMiyako = favMiyako + 1
@@ -1628,7 +1682,29 @@ mod tests {
     }
 
     #[test]
-    fn executes_variables_and_ida_verified_false_branch() {
+    fn comparison_operators_jump_only_when_true() {
+        for (operator, left, right, expected) in [
+            ("==", 1, 1, true), ("==", 1, 2, false),
+            ("!=", 1, 2, true), ("!=", 1, 1, false),
+            (">", 2, 1, true), (">", 1, 1, false),
+            ("<", -1, 0, true), ("<", 0, 0, false),
+            (">=", 1, 1, true), (">=", 0, 1, false),
+            ("<=", 1, 1, true), ("<=", 2, 1, false),
+        ] {
+            let mut vm = Vm::new("condition.sc", program(&format!(
+                ".if {left} {operator} {right} YES\n.set result = 0\n.goto DONE\n.label YES\n.set result = 1\n.label DONE\n.end"
+            )));
+            for _ in 0..16 {
+                vm.tick(0, no_scripts).unwrap();
+                if vm.state() == &VmState::Finished { break; }
+            }
+            assert_eq!(vm.local("result"), Some(i32::from(expected)),
+                "{left} {operator} {right}");
+        }
+    }
+
+    #[test]
+    fn false_condition_falls_through() {
         let mut vm = Vm::new(
             "branch.sc",
             program(
@@ -1642,7 +1718,7 @@ mod tests {
             }
         }
         assert_eq!(vm.global("CLEAR"), Some(0));
-        assert_eq!(vm.local("X"), Some(9));
+        assert_eq!(vm.local("X"), Some(7));
         assert_eq!(vm.state(), &VmState::Finished);
     }
 

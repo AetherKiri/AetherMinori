@@ -1996,6 +1996,11 @@ unsafe extern "C" fn debug_info(
         || "none".to_string(),
         |(width, height, top)| format!("{width}x{height}+0+{top}"),
     );
+    let locals = runtime
+        .vm
+        .as_ref()
+        .map(|vm| vm.local_variables())
+        .unwrap_or_default();
     let first_pixel = frame
         .and_then(|frame| frame.rgba.get(..4))
         .map_or_else(|| "none".to_string(), |pixel| format!("{:02x?}", pixel));
@@ -2035,7 +2040,7 @@ unsafe extern "C" fn debug_info(
         .as_ref()
         .map_or_else(String::new, SceneSystem::mouth_debug);
     let value = format!(
-        "runtime=minori language=rust vfs=paz-v2 vm=pc-stack-waits scene={scene} script={script} state={state} message={message} voice={voice} lip_actor={lip_actor} mouths={mouths} bgm={bgm} se={se} se2={se2} se3={se3} movie={movie} effect={effect} persistence_pending={} frame={frame_serial} delivered={} panel={panel_field} pixel={first_pixel} error={}",
+        "runtime=minori language=rust vfs=paz-v2 vm=pc-stack-waits scene={scene} script={script} state={state} message={message} voice={voice} lip_actor={lip_actor} mouths={mouths} bgm={bgm} se={se} se2={se2} se3={se3} movie={movie} effect={effect} persistence_pending={} frame={frame_serial} delivered={} panel={panel_field} pixel={first_pixel} locals={locals:?} error={}",
         runtime.persistence_pending,
         runtime.delivered_serial,
         runtime.error.to_string_lossy()
