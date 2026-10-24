@@ -2,11 +2,11 @@
 
 ## Production follow-up (2026-10-24)
 
-The authorized implementation round corrected `HsvFilter` to six raw fields `bg_h/bg_s/bg_v/st_h/st_s/st_v` and exact-six operand validation, matching the original parser and scene binding below. The fabricated global brightness/red/green equation has been **removed**, not replaced with a guessed standard HSV conversion. The scene stores the two independent triples; nonzero color correction is currently **unimplemented**. This is a scoped state-model fix, not completion of the renderer or all ef commands. All-zero composition remains unchanged. Regression tests cover distinct signed operands, both corpus tuples, wrong arity, retained state, repeated refresh, and an asymmetric background/semitransparent standing-art fixture without altering originals. The latter test intentionally asserts the no-rendering fallback, not original nonzero expected pixels.
+The production VM maps exactly six operands into `bg_h/bg_s/bg_v/st_h/st_s/st_v`, and validates exactly six arguments. The fabricated global RGB gains were removed. A native instruction-derived S/V kernel is implemented but remains isolated and is **not applied to rendered frames**; hue transfer and the standing-state renderer remain unproved. The runtime therefore preserves the two triples without claiming nonzero pixel fidelity. All-zero output is unchanged. Regression tests cover distinct signed operands, corpus tuples, wrong arity, state retention, and the intentionally no-rendering fallback.
 
 ### Additional bounded native evidence
 
-Target identity remains SHA-256 `9824732313d13136cb2300f33038a655ba480ae01cefc2749028d1b1748b4f9e`. New complete export: [ef-hsv-implementation-evidence.json](</var/lib/dsh/Minori/ef-re/ef-hsv-implementation-evidence.json>). No game execution or cold Ghidra analysis was performed; process observations inspected original bytes with objdump/Python. No binary target was opened; `close_binary` returned null after export.
+Target identity remains SHA-256 `9824732313d13136cb2300f33038a655ba480ae01cefc2749028d1b1748b4f9e`. Initial export: [ef-hsv-implementation-evidence.json](</var/lib/dsh/Minori/ef-re/ef-hsv-implementation-evidence.json>). Follow-up exports: [round19 renderer](</var/lib/dsh/Minori/ef-re/ef-st-renderer-round19.json>), [round20 downstream](</var/lib/dsh/Minori/ef-re/ef-hsv-downstream-consumer-evidence.json>). No game execution; bounded objdump inspected original bytes. Ghidra cold decompilation timed out. All REA targets closed after capture.
 
 - `ev_b86f7f21bfa7d1135b2752559278fcc25031091bce02386391f3402baa96f388`: exact getter bodies 0x42ed40..0x42ed90 read +0x198..+0x1ac.
 - `ev_6dde9515537cdb2ebbab8bda36ef89c20d39d9fd714b01b2a04a30f276ea26a5` and `ev_552167b56fe0cadaf08754f473d8c55ec13641d1a246779b73faa77a322e0cc7`: bounded raw e8/literal-pointer searches did not identify getter callers; syntactic negative results do not prove absence.
@@ -16,15 +16,15 @@ Target identity remains SHA-256 `9824732313d13136cb2300f33038a655ba480ae01cefc27
 - `ev_23e397be43e4fe0cb1f233aaa4b31466f2ee2babc70162684c945359deaed239`: aligned 0x5069ca copies renderer +0x438/+43c/+440 into a standing-object +4/+8/+c.
 - Round 19 exported bounded disassemblies: [standing consumer](</var/lib/dsh/Minori/ef-re/ef-st-consumer-round19.json>), [helper](</var/lib/dsh/Minori/ef-re/ef-st-helper-round19.json>), and [renderer path](</var/lib/dsh/Minori/ef-re/ef-st-renderer-round19.json>); all from executable SHA-256 9824732313d13136cb2300f33038a655ba480ae01cefc2749028d1b1748b4f9e. The consumer at 0x5069ca demonstrably copies the three fields and subsequently passes the constructed object through indirect calls to helper 0x4d91f0. In caller 0x539297, further retrieved 0x4d91f0-created data is supplied as arguments to indirect renderer vtable methods (e.g. 0x5392a9..0x5392e1). This narrows the ST route to standing-object rendering, but object offsets at that later consumer are not proven to be these same +4/+8/+c fields, and the indirect method bodies remain unresolved. This is evidence of forwarding, not proof that the S/V kernel is the standing renderer. Hue, renderer lifetime/reset, channel layout, alternate pixel formats, and stage-extra handling remain unresolved. All captures exited 0 and were bounded; no game execution occurred.
 
-A parallel audit handoff also exported [ef-hsv-math-handoff-evidence.json](</var/lib/dsh/Minori/ef-re/ef-hsv-math-handoff-evidence.json>): reported chain 0x4df7f7..0x4df824 to setter 0x4ffb30 and clamping H[-180,180], S/V[-100,100]. These are downstream renderer clamps, not justification to clamp raw command state at parse time. The original eight residuals below remain unless explicitly resolved above.
+A parallel audit handoff also exported [ef-hsv-math-handoff-evidence.json](</var/lib/dsh/Minori/ef-re/ef-hsv-math-handoff-evidence.json>): reported chain 0x4df7f7..0x4df824 to setter 0x4ffb30 and clamping H[-180,180], S/V[-100,100]. These are downstream renderer clamps, not justification to clamp raw command state at parse time. The residuals below are current and remain unless explicitly resolved above.
 
 ---
 
-## One actionable finding
+## Historical initial finding (superseded by implementation above)
 
-**The six .HSVfilter operands represent two HSV triples, not one global HSV/contrast/RGB adjustment.** The current VM maps them to hue, saturation, brightness, contrast, red and green; the scene pass then ignores hue/saturation/contrast and applies brightness plus red/green gains to the already-composited scene. This does not preserve the original command's independently named background and standing-art state.
+**The six `.HSVfilter` operands are two separately named triples, not one global adjustment.** The production VM now preserves `bg_h/s/v` and `st_h/s/v`; the old global red/green gain pass was removed. The original background S/V kernel has been ported but intentionally remains unconnected because correct source-layer ownership and standing path are not established.
 
-This is a static command/state-layout finding, **not** a pixel-equivalence or gameplay-runtime claim. Production files were not edited. Another agent was concurrently changing scene/provider title handling, so source line numbers can move; function names below are the durable selectors.
+This is a static command/state-layout finding, **not** a pixel-equivalence or gameplay-runtime claim. Correct state mapping and the isolated kernel have since been implemented; the latter is not connected to frames. The historical source snapshot below is retained as audit lineage, while current implementation status is summarized above.
 
 ## Exact original evidence (independent of historical handler metadata)
 
@@ -39,25 +39,25 @@ All addresses are linked PE VAs, not observed runtime addresses. Used bounded ob
 
 | Operand | Object field | Scene field | Original bound name | Current VM field |
 | --- | --- | --- | --- | --- |
-| 1 | +44 | +198 | !bgH | hue |
-| 2 | +48 | +19c | !bgS | saturation |
-| 3 | +4c | +1a0 | !bgV | brightness |
-| 4 | +50 | +1a4 | !stH | contrast |
-| 5 | +54 | +1a8 | !stS | red |
-| 6 | +58 | +1ac | !stV | green |
+| 1 | +44 | +198 | !bgH | bg_h |
+| 2 | +48 | +19c | !bgS | bg_s |
+| 3 | +4c | +1a0 | !bgV | bg_v |
+| 4 | +50 | +1a4 | !stH | st_h |
+| 5 | +54 | +1a8 | !stS | st_s |
+| 6 | +58 | +1ac | !stV | st_v |
 
-The [extracted corpus](</var/lib/dsh/Minori/ef-re/extracted/scr/100_01.sc>) contains .HSVfilter 0 0 0 5 -5 0 at line 767 (ASCII command observed with grep; read tool rejects this non-UTF-8 script). Under current implementation this ignores operand 4 and multiplies red by 0.95 globally, while the binary stores operands 4/5 as !stH/!stS and leaves all three !bg fields zero. Similarly [108_03.sc](</var/lib/dsh/Minori/ef-re/extracted/scr/108_03.sc>) line 37 uses 0 0 0 0 5 -5: current global R/G gains cannot represent the original separate state triple. This establishes wrong parameter interpretation; exact expected RGB output still requires the downstream HSV transfer function.
+The [extracted corpus](</var/lib/dsh/Minori/ef-re/extracted/scr/100_01.sc>) contains `.HSVfilter 0 0 0 5 -5 0` at line 767; [108_03.sc](</var/lib/dsh/Minori/ef-re/extracted/scr/108_03.sc>) line 37 contains `0 0 0 0 5 -5`. Production state now preserves these exact tuples in separate triples; expected pixels are not yet implemented.
 
-## Minimal fix recommendation (not applied)
+## Scoped fix applied; rendering remains unimplemented
 
-In [vm.rs](<../../src/vm.rs>), replace HsvFilter's global hue/saturation/brightness/contrast/red/green/blue model and CommandKind::HsvFilter mapping with two explicitly named triples bg_h/bg_s/bg_v and st_h/st_s/st_v, preserving operand order. In [scene.rs](<../../src/scene.rs>), retain this separation through composition; do not implement operands 5/6 as global red/green gains. Locate and port the original downstream HSV arithmetic before claiming exact color fidelity. The smallest safe first patch is correct state/mapping plus focused tests, **not** guessing a new global filter equation. Keep all-zero identity and alpha unchanged. Test both corpus tuples above and an asymmetric background/standing-sprite fixture to prevent cross-layer contamination. Apply st adjustments before flattening .stage standing-art extras into the background; retain unfiltered originals to avoid cumulative filtering on refresh. Update the misleading UI/contrast/RGB comments alongside the eventual fix.
+The production state-model patch is committed as `0b1f490`; the instruction-derived, isolated S/V kernel is `1917d70`. Rendering integration is deliberately deferred: determine original layer ownership and standing-state callback behavior before applying the kernel. Do not replace the unresolved hue/standing transform with guessed math. The tests assert state preservation and the no-filter fallback, not original pixel values.
 
 ## Scope inventory and precise residuals
 
 Source inspected: [command.rs](<../../src/command.rs>), [vm.rs](<../../src/vm.rs>) command branches and parse_layer/parse_stage, [provider.rs](<../../src/provider.rs>) graphics-event routing, [scene.rs](<../../src/scene.rs>) apply_screen/apply_overlay/apply_frame_stills/apply_hsv_filter, refresh_composed_frame, strip expansion, composite_layers, apply_stage, and effect dispatch. [FORMAT.md](<FORMAT.md>) is corpus/archive research, not native handler proof; its statement that these commands still need implementation is stale relative to existing branches.
 
 1. **HSV transfer function unresolved:** exact units, hue wrap, saturation/value scaling, clamp/rounding, integer precision, alpha treatment, and the final downstream drawing implementation were not recovered. Separate triples and their state destinations are established; exact pixels are not.
-2. **HSV lifetime/integration unresolved:** when triples persist/reset across stage, chain, save/load, scrolling and transitions; whether overlays/frame/panel/effect particles participate; precise treatment of .stage extras. Original executor/state forwarding was inspected, not all consumers.
+2. **HSV lifetime/integration unresolved:** when triples persist/reset across stage, chain, save/load, scrolling and transitions; whether overlays/frame/panel/effect particles participate; precise treatment of .stage extras. Round 19/20 evidence shows field copies into a standing object and unresolved indirect renderer callbacks; the exact standing filter-to-pixel consumer was not proved.
 3. **.screen/.overlay unresolved:** original argument arity, * clear versus preserve semantics, resource-prefix semantics, strip padding/scaling/sampling/blending and exact placement/order. Current source decodes strips and applies screen then overlay after character composition; that conflicts with its screen-under-scene comment, but original order was not independently established here, so it is a source/comment inconsistency, not a second proven ef-binary defect.
 4. **.frame unresolved:** original count/selection, * semantics, prefix handling, still origin/dimensions/blending, draw order and lifecycle. Existing source stores decoded stills; native frame parser/executor not independently reconstructed.
 5. **.effect unresolved:** native ef dispatch and all kind-specific timing, randomness, motion, stop/fade and resource policies. Existing source supports scrolling/cutin/particle families and rejects other names; its end-stop explanation explicitly says “suggests”, which is hypothesis rather than exact ef proof.
