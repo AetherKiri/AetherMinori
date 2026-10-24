@@ -130,6 +130,28 @@ fn main() -> Result<(), String> {
                         .map_err(|e| format!("write trace: {e}"))?;
                     runtime.submit_response("minori_select", &format!("index={index}"))?;
                 }
+                "minori_movie" => {
+                    // Offline movie backend: decode every video/audio packet to a
+                    // null sink, and preserve a real decoded first-frame screenshot.
+                    // This consumes the clip without wall-clock playback or sound.
+                    let path = value.split('\t').next().ok_or("movie request lacks a path")?;
+                    let snapshot = output.join(format!("movie-{index:06}.png"));
+                    let first = std::process::Command::new("ffmpeg")
+                        .args(["-nostdin", "-v", "error", "-y", "-i", path, "-frames:v", "1"])
+                        .arg(&snapshot).output().map_err(|e| format!("start movie decoder: {e}"))?;
+                    if !first.status.success() {
+                        return Err(format!("movie frame decode failed: {}", String::from_utf8_lossy(&first.stderr)));
+                    }
+                    let decoded = std::process::Command::new("ffmpeg")
+                        .args(["-nostdin", "-v", "error", "-i", path, "-f", "null", "-"])
+                        .output().map_err(|e| format!("start movie decoder: {e}"))?;
+                    if !decoded.status.success() || !decoded.stderr.is_empty() {
+                        return Err(format!("movie stream decode failed: {}", String::from_utf8_lossy(&decoded.stderr)));
+                    }
+                    writeln!(trace, "movie\t{index}\tdecoded-offline\t{path}")
+                        .map_err(|e| format!("write movie trace: {e}"))?;
+                    runtime.submit_response("minori_movie", "result=complete")?;
+                }
                 "minori_message_reveal" => {}
                 _ => {}
             }
