@@ -200,7 +200,7 @@ fn main() -> Result<(), String> {
         let finished = state == "Finished";
         // Only sample frames: a 3,000-tick run would otherwise write several
         // gigabytes of PNG and has no extra value over the trace.
-        if (index % every == 0 || finished)
+        if (index % every == 0 || finished || index + 1 == frames)
             && let Some((width, height, mut rgba)) = runtime.frame()
         {
             if let (Some(renderer), Some((speaker, body))) = (text.as_ref(), message.as_ref()) {
