@@ -19,12 +19,12 @@ The original .if branches to its label when the comparison is TRUE, not false. T
 - Label handling loads current script from VM+0x1c34, looks up object+0xb8 label in script+0x4c. A valid nonnegative index from node+0x28 is stored to VM+0x1c3c at 0x4ed618 and optionally VM->0xc +0x24 at 0x4ed625.
 - Hence favMiyako > 0 selects miyakotrue; <= 0 selects miyakobad. Historical 0x449010 was not used to identify this handler.
 
-## .chain (partial)
+## .chain (consumer followed; see CHAIN_NEXT.md)
 
 - .chain literal VA 0x578728, registration constructor call at 0x4cccff -> 0x4f13e0, vtable 0x5760e4, executor slot +8 -> 0x4f1490.
 - Executor calls 0x4ddaa0, then calls 0x4c7f70 on VM+0x1c2c and stores its argument (object+0x44) under literal NEXT (0x5760d4), using 0x4c90b0 with flag 1.
 - Variable lookup 0x4d9770 searches VM+0x1c30 first and VM+0x1c2c second.
-- No demonstrated local-variable clearing in this immediate .chain executor. However the eventual script-switch consumer of NEXT was not followed, so local variable persistence across the full transition remains UNRESOLVED. Do not claim preservation or clearing from this limited evidence.
+- Follow-up: [CHAIN_NEXT.md](CHAIN_NEXT.md) traces NEXT consumer `0x4e36a1..0x4e384c` through script activation `0x4d8770` and single-key NEXT removal. The normal successful transition retains both VM variable stores; no blanket local clear occurs. Explicit VM+0x1c30 clearing belongs to a separate restoration helper `0x4e3940`, not this transition. See the follow-up for evidence IDs and command-specific cleanup/runtime limitations.
 
 ## REA evidence
 
