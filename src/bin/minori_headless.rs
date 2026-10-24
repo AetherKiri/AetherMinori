@@ -72,6 +72,7 @@ fn main() -> Result<(), String> {
     let text = TextRenderer::system().ok();
     println!("text_renderer={}", text.is_some());
     let mut message: Option<(String, String)> = None;
+    let mut reveal = RevealClock::default();
     let mut requests: Vec<(String, String)> = Vec::new();
     // Persist each observation immediately, including when a later tick fails.
     let mut trace = std::fs::File::create(output.join("story-trace.txt"))
@@ -81,6 +82,7 @@ fn main() -> Result<(), String> {
     let mut saved = 0usize;
     let mut last_serial = u64::MAX;
     for index in 0..frames {
+        reveal.advance(delta);
         if let Err(error) = runtime.tick(delta) {
             writeln!(trace, "error\t{index}\t{error}\t{}", runtime.debug_info())
                 .map_err(|e| format!("write trace: {e}"))?;
@@ -95,10 +97,12 @@ fn main() -> Result<(), String> {
                 "minori_message" => {
                     if value.is_empty() {
                         message = None;
+                        reveal = RevealClock::default();
                     } else {
                         let fields: Vec<&str> = value.split('\t').collect();
                         if fields.len() >= 2 {
                             message = Some((fields[0].to_string(), fields[1].to_string()));
+                            reveal = RevealClock::from_fields(&fields);
                         }
                     }
                 }
@@ -159,7 +163,7 @@ fn main() -> Result<(), String> {
                         .map_err(|e| format!("write movie trace: {e}"))?;
                     runtime.submit_response("minori_movie", "result=complete")?;
                 }
-                "minori_message_reveal" => {}
+                "minori_message_reveal" => reveal.complete = true,
                 _ => {}
             }
         }
@@ -177,7 +181,8 @@ fn main() -> Result<(), String> {
             && let Some((width, height, mut rgba)) = runtime.frame()
         {
             if let (Some(renderer), Some((speaker, body))) = (text.as_ref(), message.as_ref()) {
-                draw_message(renderer, &mut rgba, width, height, speaker, body, panel_rect);
+                let visible = reveal.visible_text(body);
+                draw_message(renderer, &mut rgba, width, height, speaker, &visible, panel_rect);
             }
             let path = output.join(format!("frame-{index:04}.png"));
             write_png(&path, width, height, &rgba)?;
@@ -204,6 +209,53 @@ fn main() -> Result<(), String> {
         println!("{name} -> {value}");
     }
     Ok(())
+}
+
+#[derive(Default)]
+struct RevealClock {
+    schedule: Vec<u32>,
+    elapsed_ms: u64,
+    started: bool,
+    complete: bool,
+}
+
+impl RevealClock {
+    fn from_fields(fields: &[&str]) -> Self {
+        let schedule = fields.get(3).filter(|s| !s.is_empty())
+            .map(|s| s.split(',').filter_map(|n| n.parse().ok()).collect()).unwrap_or_default();
+        Self { schedule, ..Self::default() }
+    }
+
+    fn advance(&mut self, delta: u32) {
+        if self.started { self.elapsed_ms = self.elapsed_ms.saturating_add(u64::from(delta)); }
+        else { self.started = true; }
+    }
+
+    fn visible_text(&self, text: &str) -> String {
+        if self.complete || self.schedule.is_empty() { return text.to_string(); }
+        let step = if self.started { 1 + self.elapsed_ms / 100 } else { 0 };
+        text.chars().zip(&self.schedule)
+            .take_while(|(_, at)| u64::from(**at) <= step).map(|(ch, _)| ch).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RevealClock;
+
+    #[test]
+    fn reveal_clock_preserves_cjk_pause_schedule_and_explicit_completion() {
+        let mut clock = RevealClock::from_fields(&["", "你好！", "5", "1,4,5"]);
+        assert_eq!(clock.visible_text("你好！"), "");
+        clock.advance(120);
+        assert_eq!(clock.visible_text("你好！"), "你");
+        clock.advance(200);
+        assert_eq!(clock.visible_text("你好！"), "你");
+        clock.advance(100);
+        assert_eq!(clock.visible_text("你好！"), "你好");
+        clock.complete = true;
+        assert_eq!(clock.visible_text("你好！"), "你好！");
+    }
 }
 
 fn field(debug: &str, prefix: &str) -> String {
