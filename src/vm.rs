@@ -772,8 +772,16 @@ impl Vm {
                 }));
             }
             CommandKind::PlayVoice => {
-                let name = one_argument(command.name(), &arguments)?.to_owned();
-                events.push(VmEvent::PlayVoice(VoiceRequest { name }));
+                if arguments.is_empty() {
+                    return Err("playVoice requires a resource name".into());
+                }
+                // Only the resource name is read. 205_01.sc writes
+                // `.playVoice * * 0`, the same trailing stop-and-fade shape
+                // `.playBGM * * 0` uses one line later, so extra arguments are
+                // accepted and ignored rather than rejected.
+                events.push(VmEvent::PlayVoice(VoiceRequest {
+                    name: arguments[0].clone(),
+                }));
             }
             CommandKind::Pragma => {
                 let mode = one_argument(command.name(), &arguments)?;

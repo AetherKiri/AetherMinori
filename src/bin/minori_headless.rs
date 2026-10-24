@@ -103,11 +103,10 @@ fn main() -> Result<(), String> {
                         .lines()
                         .filter(|line| !line.is_empty())
                         .collect();
-                    let wanted = if choices.is_empty() {
-                        0
-                    } else {
-                        choices[branches % choices.len()]
-                    };
+                    // --choose indexes by branch ordinal, so a route can name
+                    // exactly the decision at each fork. Branches past the list
+                    // take the first option.
+                    let wanted = choices.get(branches).copied().unwrap_or(0);
                     branches += 1;
                     let index = wanted.min(options.len().saturating_sub(1));
                     trace.push(format!(
