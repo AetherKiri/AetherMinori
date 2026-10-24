@@ -13,9 +13,9 @@ The original .if branches to its label when the comparison is TRUE, not false. T
 - Registration block 0x4cc5a5 allocates 0xd4 bytes, calls constructor 0x4ed940 at 0x4cc5bc, then pairs object with the .if literal at 0x4cc5c8 onward.
 - Constructor sets vtable 0x57683c at 0x4ed970. Vtable slot +8 points to executor 0x4ed3d0. Slot +4 points to four-argument parser 0x4ed2f0; arguments stored at object +0x64 (left), +0x80 (operator), +0x9c (right), +0xb8 (label).
 - Operator literals: != 0x576820, == 0x576824, > 0x576828, < 0x575698, >= 0x57682c, <= 0x576830.
-- Executor resolves operands and obtains integer left in EBX and right in ESI.
-- For >: 0x4ed5a8 selects literal 0x576828; 0x4ed5b6 cmp ESI,EBX; 0x4ed5b8 JLE 0x4ed628 skips label handling when left <= right. Otherwise 0x4ed5ba jumps to label handling 0x4ed570.
-- For <=: 0x4ed5e4 selects literal 0x576830; 0x4ed5f2 cmp ESI,EBX; 0x4ed5f4 JG 0x4ed628 skips when left > right. Otherwise 0x4ed5f6 jumps to label handling.
+- Executor resolves operands and obtains integer left in EBX and right in ESI: left object+0x64 is selected at 0x4ed40f and its parsed value loaded into EBX at 0x4ed4e0; right object+0x9c is selected at 0x4ed45e and its parsed value loaded into ESI at 0x4ed52a. Comparison notation below is GNU objdump AT&T source,destination: `cmp %esi,%ebx` (bytes `3b de`) sets flags for EBX - ESI, i.e. left - right. In Intel destination,source notation this is `cmp ebx,esi`. Register mapping and branch conclusions are unchanged; the syntax distinction prevents reversing the comparison.
+- For >: 0x4ed5a8 selects literal 0x576828; 0x4ed5b6 `cmp %esi,%ebx` (AT&T); 0x4ed5b8 JLE 0x4ed628 skips label handling when left <= right. Otherwise 0x4ed5ba jumps to label handling 0x4ed570.
+- For <=: 0x4ed5e4 selects literal 0x576830; 0x4ed5f2 `cmp %esi,%ebx` (AT&T); 0x4ed5f4 JG 0x4ed628 skips when left > right. Otherwise 0x4ed5f6 jumps to label handling.
 - Label handling loads current script from VM+0x1c34, looks up object+0xb8 label in script+0x4c. A valid nonnegative index from node+0x28 is stored to VM+0x1c3c at 0x4ed618 and optionally VM->0xc +0x24 at 0x4ed625.
 - Hence favMiyako > 0 selects miyakotrue; <= 0 selects miyakobad. Historical 0x449010 was not used to identify this handler.
 
