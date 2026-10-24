@@ -94,7 +94,7 @@ pub struct GameMenuItemProfile {
     pub height: f64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct GameMenuProfile {
     pub background: &'static str,
     pub right_margin: i32,
@@ -352,6 +352,23 @@ const SUPIPARA_GAME_MENU_ITEMS: &[GameMenuItemProfile] = &[
     },
 ];
 
+// Identical menu art and geometry are shared; work-specific save grids remain below.
+const SHARED_GAME_MENU: GameMenuProfile = GameMenuProfile {
+    background: "gameMenuBack.png",
+    right_margin: 6,
+    bottom_margin: 15,
+    trigger_size: 96.0,
+    items: SUPIPARA_GAME_MENU_ITEMS,
+};
+
+const HD_MESSAGE_WAIT: MessageWaitProfile = MessageWaitProfile {
+    resource: "pauseAnimeNextPage.png",
+    frames: 9,
+    interval_ms: 100,
+    x: 1138.0,
+    y: 674.0,
+};
+
 pub static TRINOLINE_PROFILE: GameProfile = GameProfile {
     id: "trinoline",
     archive: &TRINOLINE_ARCHIVE_PROFILE,
@@ -360,20 +377,8 @@ pub static TRINOLINE_PROFILE: GameProfile = GameProfile {
     ui: UiProfile {
         message_panel: "msgPanel.png",
         message_panel_offset_y: 64,
-        message_wait: MessageWaitProfile {
-            resource: "pauseAnimeNextPage.png",
-            frames: 9,
-            interval_ms: 100,
-            x: 1138.0,
-            y: 674.0,
-        },
-        game_menu: GameMenuProfile {
-            background: "gameMenuBack.png",
-            right_margin: 6,
-            bottom_margin: 15,
-            trigger_size: 96.0,
-            items: SUPIPARA_GAME_MENU_ITEMS,
-        },
+        message_wait: HD_MESSAGE_WAIT,
+        game_menu: SHARED_GAME_MENU,
         save_load: SaveLoadProfile {
             base: "saveload\\saveDefaultBackground.png",
             save_heading: "saveload\\saveText.png",
@@ -418,20 +423,8 @@ pub static SUPIPARA_PROFILE: GameProfile = GameProfile {
     ui: UiProfile {
         message_panel: "msgPanel.png",
         message_panel_offset_y: 64,
-        message_wait: MessageWaitProfile {
-            resource: "pauseAnimeNextPage.png",
-            frames: 9,
-            interval_ms: 100,
-            x: 1138.0,
-            y: 674.0,
-        },
-        game_menu: GameMenuProfile {
-            background: "gameMenuBack.png",
-            right_margin: 6,
-            bottom_margin: 15,
-            trigger_size: 96.0,
-            items: SUPIPARA_GAME_MENU_ITEMS,
-        },
+        message_wait: HD_MESSAGE_WAIT,
+        game_menu: SHARED_GAME_MENU,
         save_load: SaveLoadProfile {
             base: "saveloadBase.png",
             save_heading: "saveloadSave.png",
@@ -484,13 +477,7 @@ pub static EF_PROFILE: GameProfile = GameProfile {
             x: 780.0,
             y: 574.0,
         },
-        game_menu: GameMenuProfile {
-            background: "gameMenuBack.png",
-            right_margin: 6,
-            bottom_margin: 15,
-            trigger_size: 96.0,
-            items: SUPIPARA_GAME_MENU_ITEMS,
-        },
+        game_menu: SHARED_GAME_MENU,
         save_load: SaveLoadProfile {
             base: "saveloadBase.png",
             save_heading: "saveloadSave.png",
