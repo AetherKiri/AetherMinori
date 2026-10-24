@@ -785,6 +785,15 @@ impl SceneSystem {
                 });
                 Ok(())
             }
+            // `.effect end` stops whatever is running. ef always follows it with
+            // `.overlay *` / `.screen *`, which suggests it retires the whole
+            // effect stack before the layers are cleared.
+            "end" | "End" | "stop" => {
+                self.particles = None;
+                self.wscroll = None;
+                self.cutin = None;
+                Ok(())
+            }
             "Snow" | "SnowH" | "Snow2" => self.start_particles(vfs, request),
             "Sakura" => self.start_particles_for(vfs, request, "sakura"),
             "Rain" | "RainH" => self.start_particles_for(vfs, request, "rain"),
