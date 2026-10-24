@@ -1333,9 +1333,15 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
                             // mov.paz ships separately, and the story still has
                             // to run when it is absent: 701_01.sc plays the
                             // ending movie behind an `if ef_clear == 1` guard and
-                            // then carries straight on.
+                            // then carries straight on. The statement already
+                            // parked the VM in WaitingMovie, so the skip has to
+                            // release it -- otherwise the run freezes there with
+                            // every later frame identical.
                             Err(error) => {
                                 runtime.error = safe_cstring(&error);
+                                if let Some(vm) = runtime.vm.as_mut() {
+                                    vm.complete_movie();
+                                }
                                 continue;
                             }
                         }
