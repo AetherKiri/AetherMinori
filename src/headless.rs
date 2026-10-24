@@ -209,6 +209,29 @@ impl Headless {
     }
 
     /// Start the game again, picking up a changed `minori.start`.
+    /// Answer a pending platform request, exactly as the Aether host does.
+    ///
+    /// The engine blocks in `WaitingSelect` until the host replies through
+    /// `submit_platform_response`, so a headless run has to answer too --
+    /// otherwise the story stops dead at the first choice.
+    pub fn submit_response(&mut self, operation: &str, argument: &str) -> Result<(), String> {
+        let provider = descriptor();
+        let submit = provider
+            .submit_platform_response
+            .ok_or("provider has no submit_platform_response")?;
+        let operation = CString::new(operation).map_err(|e| format!("operation: {e}"))?;
+        let argument = CString::new(argument).map_err(|e| format!("argument: {e}"))?;
+        let status = unsafe { submit(self.opaque, operation.as_ptr(), argument.as_ptr()) };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "submit_platform_response({operation:?}) failed with {status}: {}",
+                self.last_error()
+            ))
+        }
+    }
+
     pub fn restart(&mut self) -> Result<(), String> {
         let provider = descriptor();
         let open_game = provider.open_game.ok_or("provider has no open_game")?;
