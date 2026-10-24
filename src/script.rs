@@ -99,7 +99,11 @@ fn select_line(line: &str, language: Language) -> Option<&str> {
         return Some(trimmed);
     }
     match Language::from_code(code) {
-        Some(found) if found == language => Some(body.trim_start()),
+        // 62 lines in the corpus write the variant prefix with a colon
+        // (`[j]:.wait 200`), always on the Japanese pacing pass. The colon is a
+        // separator, not part of the command: left in place the line parsed as a
+        // narration message and `:wait 200` appeared on screen as dialogue.
+        Some(found) if found == language => Some(body.trim_start().trim_start_matches(':')),
         Some(_) => None,
         None => Some(trimmed),
     }
@@ -246,6 +250,30 @@ mod tests {
                 ],
             }
         );
+    }
+
+    #[test]
+    fn colon_separated_variant_prefix_still_names_a_command() {
+        // 701_01.sc ships `[j]:.wait 200` between two transitions.
+        let source = "[e].wait 40\n[j]:.wait 200\n.wait 20\n";
+        let japanese = Program::parse_with_language(source, Language::Japanese).unwrap();
+        assert_eq!(
+            japanese.statements[0],
+            Statement::Command {
+                kind: CommandKind::Wait,
+                arguments: vec!["200".into()],
+            }
+        );
+        assert_eq!(japanese.statements.len(), 2);
+        let english = Program::parse_with_language(source, Language::English).unwrap();
+        assert_eq!(
+            english.statements[0],
+            Statement::Command {
+                kind: CommandKind::Wait,
+                arguments: vec!["40".into()],
+            }
+        );
+        assert_eq!(english.statements.len(), 2);
     }
 
     #[test]
