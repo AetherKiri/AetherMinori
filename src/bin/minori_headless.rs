@@ -29,6 +29,8 @@ fn main() -> Result<(), String> {
     let mut clicks = 0usize;
     let mut language = "j".to_string();
     let mut start: Option<String> = None;
+    // Which option answers each branch, cycled. Empty means always the first.
+    let mut choices: Vec<usize> = Vec::new();
     while let Some(argument) = args.next() {
         let text = argument.to_string_lossy().into_owned();
         let mut value = || -> Result<String, String> {
@@ -39,6 +41,12 @@ fn main() -> Result<(), String> {
         match text.as_str() {
             "--frames" => frames = value()?.parse().map_err(|e| format!("{e}"))?,
             "--every" => every = value()?.parse::<usize>().map_err(|e| format!("{e}"))?.max(1),
+            "--choose" => {
+                choices = value()?
+                    .split(',')
+                    .map(|part| part.trim().parse::<usize>().map_err(|e| format!("{e}")))
+                    .collect::<Result<Vec<_>, _>>()?
+            }
             "--delta" => delta = value()?.parse().map_err(|e| format!("{e}"))?,
             "--clicks" => clicks = value()?.parse().map_err(|e| format!("{e}"))?,
             "--language" => language = value()?,
@@ -65,6 +73,7 @@ fn main() -> Result<(), String> {
     let mut message: Option<(String, String)> = None;
     let mut requests: Vec<(String, String)> = Vec::new();
     let mut trace: Vec<String> = Vec::new();
+    let mut branches = 0usize;
 
     let mut saved = 0usize;
     let mut last_serial = u64::MAX;
@@ -85,6 +94,28 @@ fn main() -> Result<(), String> {
                             message = Some((fields[0].to_string(), fields[1].to_string()));
                         }
                     }
+                }
+                "minori_select" => {
+                    // The engine sits in WaitingSelect until the host posts a
+                    // choice back; the retail host shows a menu and returns the
+                    // chosen index through submit_platform_response.
+                    let options: Vec<&str> = value
+                        .lines()
+                        .filter(|line| !line.is_empty())
+                        .collect();
+                    let wanted = if choices.is_empty() {
+                        0
+                    } else {
+                        choices[branches % choices.len()]
+                    };
+                    branches += 1;
+                    let index = wanted.min(options.len().saturating_sub(1));
+                    trace.push(format!(
+                        "branch\t{}\t{}",
+                        index,
+                        options.get(index).copied().unwrap_or("")
+                    ));
+                    runtime.submit_response("minori_select", &format!("index={index}"))?;
                 }
                 "minori_message_reveal" => {}
                 _ => {}
