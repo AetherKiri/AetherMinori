@@ -8,9 +8,10 @@
 //!
 //! Usage:
 //!   minori-headless GAME_ROOT OUTPUT_DIR [--frames N] [--delta MS] [--clicks N]
-//!                   [--language e|j] [--start SCRIPT]
+//!                   [--language e|j] [--start SCRIPT] [--every N] [--choose 0,1,...]
 
 use std::env;
+use std::io::Write;
 use std::path::PathBuf;
 
 use aether_minori_runtime::headless::Headless;
@@ -20,7 +21,7 @@ fn main() -> Result<(), String> {
     let mut args = env::args_os().skip(1);
     let root = PathBuf::from(args.next().ok_or(
         "usage: minori-headless GAME_ROOT OUTPUT_DIR [--frames N] [--delta MS] [--clicks N] \
-         [--language e|j] [--start SCRIPT]",
+         [--language e|j] [--start SCRIPT] [--every N] [--choose 0,1,...]",
     )?);
     let output = PathBuf::from(args.next().ok_or("missing OUTPUT_DIR")?);
     let mut frames = 120usize;
@@ -29,7 +30,7 @@ fn main() -> Result<(), String> {
     let mut clicks = 0usize;
     let mut language = "j".to_string();
     let mut start: Option<String> = None;
-    // Which option answers each branch, cycled. Empty means always the first.
+    // Zero-based answers by branch ordinal; unspecified branches use option zero.
     let mut choices: Vec<usize> = Vec::new();
     while let Some(argument) = args.next() {
         let text = argument.to_string_lossy().into_owned();
@@ -72,13 +73,19 @@ fn main() -> Result<(), String> {
     println!("text_renderer={}", text.is_some());
     let mut message: Option<(String, String)> = None;
     let mut requests: Vec<(String, String)> = Vec::new();
-    let mut trace: Vec<String> = Vec::new();
+    // Persist each observation immediately, including when a later tick fails.
+    let mut trace = std::fs::File::create(output.join("story-trace.txt"))
+        .map_err(|e| format!("create trace: {e}"))?;
     let mut branches = 0usize;
 
     let mut saved = 0usize;
     let mut last_serial = u64::MAX;
     for index in 0..frames {
-        runtime.tick(delta)?;
+        if let Err(error) = runtime.tick(delta) {
+            writeln!(trace, "error\t{index}\t{error}\t{}", runtime.debug_info())
+                .map_err(|e| format!("write trace: {e}"))?;
+            return Err(error);
+        }
         if clicks > 0 && index % (frames / clicks.max(1)).max(1) == 0 {
             runtime.press()?;
         }
@@ -109,11 +116,9 @@ fn main() -> Result<(), String> {
                     let wanted = choices.get(branches).copied().unwrap_or(0);
                     branches += 1;
                     let index = wanted.min(options.len().saturating_sub(1));
-                    trace.push(format!(
-                        "branch\t{}\t{}",
-                        index,
-                        options.get(index).copied().unwrap_or("")
-                    ));
+                    writeln!(trace, "branch\t{}\t{}", index,
+                        options.get(index).copied().unwrap_or(""))
+                        .map_err(|e| format!("write trace: {e}"))?;
                     runtime.submit_response("minori_select", &format!("index={index}"))?;
                 }
                 "minori_message_reveal" => {}
@@ -126,12 +131,11 @@ fn main() -> Result<(), String> {
         let message_id = field(&debug, "message=");
         let panel_rect = panel_geometry(&debug);
         let line = format!("{index:04}	{script}	{message_id}	{state}");
-        if trace.last() != Some(&line) {
-            trace.push(line);
-        }
+        writeln!(trace, "{line}").map_err(|e| format!("write trace: {e}"))?;
+        let finished = state == "Finished";
         // Only sample frames: a 3,000-tick run would otherwise write several
         // gigabytes of PNG and has no extra value over the trace.
-        if index % every == 0
+        if (index % every == 0 || finished)
             && let Some((width, height, mut rgba)) = runtime.frame()
         {
             if let (Some(renderer), Some((speaker, body))) = (text.as_ref(), message.as_ref()) {
@@ -142,10 +146,13 @@ fn main() -> Result<(), String> {
             saved += 1;
             last_serial = index as u64;
         }
+        if finished {
+            println!("finished_at={index}");
+            break;
+        }
     }
     println!("frames_written={saved} last_index={last_serial}");
-    std::fs::write(output.join("story-trace.txt"), trace.join("\n"))
-        .map_err(|e| format!("write trace: {e}"))?;
+    trace.flush().map_err(|e| format!("flush trace: {e}"))?;
     println!("debug={}", runtime.debug_info());
     let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for (name, _) in &requests {
