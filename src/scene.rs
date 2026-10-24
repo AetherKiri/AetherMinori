@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::profile::{GameMenuItemKind, GameProfile};
 use crate::vfs::Vfs;
 use crate::vm::{
-    CharRequest, HsvFilter, EffectRequest, PanelRequest, ShakeRequest, StageRequest, TransitionConfig,
+    CharRequest, EffectRequest, HsvFilter, PanelRequest, ShakeRequest, StageExtra, StageRequest,
+    TransitionConfig,
 };
 
 /// Drawing surface size for one game.
@@ -1620,8 +1621,15 @@ impl SceneSystem {
         let mut foreground = Vec::new();
         for extra in &request.extras {
             let overlay = decode_png(&vfs.read(&extra.name)?)?;
-            composite_source_over(&mut image, &overlay, extra.first, extra.second);
-            scrolling.push((overlay, extra.first, extra.second));
+            // A .stage extra names a standing sprite and gives its placement in
+            // the same convention as .char: x is the horizontal centre and y the
+            // baseline the sprite stands on. Both forms in the corpus -- the
+            // single value (used for full-body art) and the "x,y" pair -- resolve
+            // to that placement, so a 594x621 sprite at 550 stands on the right
+            // of the frame with its head cropped, as the retail build shows.
+            let (x, y) = extra_origin(self.canvas, &overlay, extra);
+            composite_source_over(&mut image, &overlay, x, y);
+            scrolling.push((overlay, x, y));
         }
         if request.base_spec != "*" {
             let (screen, layers) = parse_stage_base(&request.base_spec)?;
@@ -2820,6 +2828,22 @@ fn parse_stage_base(spec: &str) -> Result<(&str, Vec<&str>), String> {
         return Err(format!("stage base requires screen:BG,ST,FG, got {spec}"));
     }
     Ok((screen, layers))
+}
+
+/// Resolve a .stage extra placement into a top-left origin.
+///
+/// Both argument forms put the sprite horizontal centre at the first value. The
+/// single value form is the common one (1,531 of 1,556 extras) and means the
+/// sprite stands on the floor, so it is bottom-aligned to the surface; the
+/// pair form gives an explicit top offset for art that does not reach the floor.
+fn extra_origin(canvas: Canvas, sprite: &Frame, extra: &StageExtra) -> (i32, i32) {
+    let center_x = extra.first - sprite.width as i32 / 2;
+    let standing = canvas.height as i32 - sprite.height as i32;
+    if extra.first == extra.second {
+        (center_x, standing)
+    } else {
+        (center_x, extra.second)
+    }
 }
 
 fn composite_source_over(target: &mut Frame, overlay: &Frame, x: i32, y: i32) {
