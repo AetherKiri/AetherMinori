@@ -70,8 +70,10 @@ fn main() -> Result<(), String> {
     // The runtime emits minori_message platform requests; the host turns them
     // into labels. The headless backend has no host, so it rasterises the same
     // strings into the frame -- that is what makes the dialogue verifiable.
-    let text = TextRenderer::system().ok();
-    println!("text_renderer={}", text.is_some());
+    let text = Some(TextRenderer::system().map_err(|error| {
+        format!("dialogue screenshot acceptance requires a CJK font: {error}")
+    })?);
+    println!("text_renderer=true");
     let mut message: Option<(String, String)> = None;
     let mut reveal = RevealClock::default();
     let mut requests: Vec<(String, String)> = Vec::new();

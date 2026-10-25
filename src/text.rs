@@ -34,14 +34,18 @@ impl TextRenderer {
             let count = ttf_parser::fonts_in_collection(&data).unwrap_or(1);
             for index in 0..count {
                 if let Ok(font) = FontVec::try_from_vec_and_index(data.clone(), index) {
-                    return Ok(Self { font });
+                    if supports_acceptance_text(&font) {
+                        return Ok(Self { font });
+                    }
                 }
             }
             if let Ok(font) = FontVec::try_from_vec(data) {
-                return Ok(Self { font });
+                if supports_acceptance_text(&font) {
+                    return Ok(Self { font });
+                }
             }
         }
-        Err("no usable system font found".into())
+        Err("no system font with Latin, Chinese and Japanese glyph coverage found".into())
     }
 
     /// Draw `text` with word wrapping, clipped to `max_width`.
@@ -94,6 +98,29 @@ impl TextRenderer {
             pen_y += line_height;
         }
         pen_y
+    }
+}
+
+fn supports_acceptance_text(font: &FontVec) -> bool {
+    has_acceptance_glyphs(|ch| font.glyph_id(ch).0 != 0)
+}
+
+fn has_acceptance_glyphs(mut mapped: impl FnMut(char) -> bool) -> bool {
+    // Representative mappings, not proof of coverage for every script character.
+    "A你我日あア。".chars().all(&mut mapped)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_acceptance_glyphs;
+
+    #[test]
+    fn latin_only_fonts_cannot_pass_dialogue_acceptance() {
+        assert!(!has_acceptance_glyphs(|ch| ch.is_ascii()));
+        assert!(!has_acceptance_glyphs(|ch| ch != '你'));
+        assert!(!has_acceptance_glyphs(|ch| ch != 'あ'));
+        assert!(!has_acceptance_glyphs(|ch| ch != 'ア'));
+        assert!(has_acceptance_glyphs(|_| true));
     }
 }
 
