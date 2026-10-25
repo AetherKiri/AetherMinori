@@ -829,8 +829,7 @@ impl SceneSystem {
         self.particles = None;
         self.wscroll = None;
         self.cutin = None;
-        self.background_rgba =
-            crop_background(self.canvas, &self.background_source, self.camera_x, self.camera_y)?.rgba;
+        self.recrop_stage_background()?;
         self.render_panel_frame();
         Ok(())
     }
@@ -1110,18 +1109,22 @@ impl SceneSystem {
             self.scroll = None;
         }
         if changed {
-            let mut target = crop_background(self.canvas, &self.background_source, self.camera_x, self.camera_y)?;
-            // Stage base-spec overlays are viewport-space, not part of the
-            // scrolling image. Reapply them after every camera crop.
-            if let Some(layers) = self.effect_layers.as_ref() {
-                for (image, x, y) in &layers.foreground {
-                    composite_source_over(&mut target, image, *x, *y);
-                }
-            }
-            self.background_rgba = target.rgba;
+            self.recrop_stage_background()?;
             self.render_panel_frame();
         }
         Ok(complete)
+    }
+
+    fn recrop_stage_background(&mut self) -> Result<(), String> {
+        let mut target = crop_background(self.canvas, &self.background_source, self.camera_x, self.camera_y)?;
+        // Keep viewport-space stage overlays independent of camera/effect state.
+        if let Some(layers) = self.effect_layers.as_ref() {
+            for (image, x, y) in &layers.foreground {
+                composite_source_over(&mut target, image, *x, *y);
+            }
+        }
+        self.background_rgba = target.rgba;
+        Ok(())
     }
 
     pub fn transition_active(&self) -> bool {
@@ -3226,6 +3229,25 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires MINORI_EF_ROOT pointing to a local ef installation"]
+    fn live_window_foreground_survives_camera_scroll_and_effect_clear() {
+        let root = std::env::var_os("MINORI_EF_ROOT").expect("set MINORI_EF_ROOT");
+        let vfs = Vfs::mount_game(root).unwrap();
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        scene.apply_stage(&vfs, &StageRequest {
+            base_spec: "past_window.png".into(), base_x: 0, base_y: 0,
+            image: "bgw_normal011a01_03_10001_sepia.png".into(), x: 0, y: 0, extras: Vec::new(),
+        }, None).unwrap();
+        let window = decode_png(&vfs.read("past_window.png").unwrap()).unwrap();
+        let opaque: Vec<_> = window.rgba.chunks_exact(4).enumerate().filter(|(_, p)| p[3] == 255).map(|(i, p)| (i * 4, p.to_vec())).collect();
+        assert!(!opaque.is_empty());
+        scene.start_scroll(&crate::vm::ScrollRequest { target_x: None, target_y: Some(1096), speed: 10 });
+        for _ in 0..3 { scene.tick_scroll(10).unwrap(); }
+        scene.clear_effect().unwrap();
+        for (offset, pixel) in opaque { assert_eq!(&scene.frame.rgba[offset..offset + 4], pixel); }
+    }
+
+    #[test]
     fn camera_scroll_retains_screen_space_stage_foreground() {
         let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
         let overlay = Frame { width: 1, height: 1, rgba: vec![17, 29, 43, 255], serial: 0 };
@@ -3234,6 +3256,8 @@ mod tests {
         scene.start_scroll(&crate::vm::ScrollRequest { target_x: None, target_y: Some(10), speed: 100 });
         scene.tick_scroll(16).unwrap();
         assert!(scene.camera_y > 0);
+        assert_eq!(&scene.frame.rgba[..4], &[17, 29, 43, 255]);
+        scene.clear_effect().unwrap();
         assert_eq!(&scene.frame.rgba[..4], &[17, 29, 43, 255]);
     }
 
