@@ -1959,6 +1959,28 @@ fn ef_snow_max_pixel(destination: [u8;4], mut source: [u8;4], alpha: i32) -> [u8
     if packed(source) > packed(destination) { source } else { destination }
 }
 
+/// Transparent intermediate; every call starts cleared, as native 0x5238f0.
+/// Final effect-layer composition is deliberately outside this recovered step.
+#[allow(dead_code)]
+fn ef_snow_surface(canvas: Canvas, sprite: &Frame, positions: &[(i32,i32)], alpha: i32) -> Vec<u8> {
+    let mut output = vec![0; canvas.width as usize * canvas.height as usize * 4];
+    for &(left,top) in positions {
+        for sy in 0..sprite.height as i32 {
+            let y = top + sy;
+            if y < 0 || y >= canvas.height as i32 { continue; }
+            for sx in 0..sprite.width as i32 {
+                let x = left + sx;
+                if x < 0 || x >= canvas.width as i32 { continue; }
+                let si = (sy as usize * sprite.width as usize + sx as usize)*4;
+                let di = (y as usize * canvas.width as usize + x as usize)*4;
+                let pixel = ef_snow_max_pixel(output[di..di+4].try_into().unwrap(), sprite.rgba[si..si+4].try_into().unwrap(),alpha);
+                output[di..di+4].copy_from_slice(&pixel);
+            }
+        }
+    }
+    output
+}
+
 fn composite_particles(canvas: Canvas, output: &mut [u8], state: &ParticleState) {
     let sprite = &state.sprite;
     for particle in &state.flakes {
@@ -4382,6 +4404,20 @@ mod tests {
         let target = &scene.transition.as_ref().unwrap().new_rgba;
         let bottom_left = ((HEIGHT - 1) * WIDTH * 4) as usize;
         assert_eq!(&target[bottom_left..bottom_left + 4], &[255; 4]);
+    }
+
+    #[test]
+    fn native_snow_surface_clears_clips_and_does_not_accumulate_opacity() {
+        let sprite = Frame {width:2,height:1,rgba:vec![90,120,150,128,10,20,30,255],serial:0};
+        let once = ef_snow_surface(Canvas::new(2,2),&sprite,&[(0,0)],128);
+        let twice = ef_snow_surface(Canvas::new(2,2),&sprite,&[(0,0),(0,0)],128);
+        assert_eq!(once,twice, "packed maximum cannot accumulate overlap opacity");
+        assert_eq!(&once[..8], &[90,120,150,64,10,20,30,128]);
+        assert_eq!(&once[8..], &[0;8]);
+        let clipped = ef_snow_surface(Canvas::new(2,2),&sprite,&[(-1,1)],256);
+        assert_eq!(&clipped[8..], &[10,20,30,255,0,0,0,0]);
+        assert_eq!(ef_snow_surface(Canvas::new(2,2),&sprite,&[],256),vec![0;16]);
+        assert_eq!(ef_snow_surface(Canvas::new(2,2),&sprite,&[(0,0)],0),vec![0;16]);
     }
 
     #[test]
