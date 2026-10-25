@@ -1,0 +1,5 @@
+# Round 64 — visible snow and animation composition acceptance
+
+Ran current repaired build with real 108_01.sc, j selector, 2001 updates at 16ms, 20 clicks, sampling every 200. Exit 0; final state Ready, message 210, effect Snow, empty runtime error. Personally inspected frame-1600.png and frame-1800.png: numerous white snow dots visibly composite over the dark character/clothing, with readable Chinese text. This establishes visible particles on actual scene assets, unlike earlier white-background screenshots. These two shots also change stage/camera/dialogue, so they are not a controlled particle-only motion comparison. Existing deterministic tick regression isolates continued particle rendering.
+
+Added regression asserting animation redraw retains a frame-layer sentinel and, during an active transition, updates only transition.new_rgba while keeping the displayed frame/serial unchanged. Full suite 103 passed, 5 ignored; 1 CLI test passed; diff check passed. No production changes this round. Native snow physics/count/order, exact transition pixels and actual host/retail parity remain unresolved. Artifacts retained untracked at acceptance/round64-snow.

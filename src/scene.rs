@@ -3200,6 +3200,24 @@ mod tests {
         assert_eq!(&scene.frame.rgba[..3], &[0; 3]);
     }
 
+    #[test]
+    fn animation_redraw_keeps_layers_and_updates_transition_destination_only() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        scene.frame_stills.push(Frame { width: 1, height: 1, rgba: vec![17, 29, 43, 255], serial: 0 });
+        scene.render_panel_frame();
+        assert_eq!(&scene.frame.rgba[..4], &[17, 29, 43, 255]);
+        let displayed = scene.frame.rgba.clone();
+        let serial = scene.frame.serial;
+        scene.transition = Some(TransitionState {
+            transition_type: 0, old_rgba: displayed.clone(), new_rgba: vec![0; scene.canvas.bytes()],
+            mask: None, tile_values: None, duration: 100, elapsed_ms: 0, progress: 0,
+        });
+        scene.render_panel_frame();
+        assert_eq!(scene.frame.rgba, displayed);
+        assert_eq!(scene.frame.serial, serial);
+        assert_eq!(&scene.transition.as_ref().unwrap().new_rgba[..4], &[17, 29, 43, 255]);
+    }
+
     /// The Supipara/Trinoline surface, which the scene tests exercise.
     const WIDTH: u32 = 1280;
     const HEIGHT: u32 = 720;
