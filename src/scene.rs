@@ -3260,6 +3260,23 @@ mod tests {
     }
 
     #[test]
+    fn freeze_does_not_bake_transient_layers_into_background() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        scene.characters.insert(1, character(200, true, true));
+        let mut translucent = vec![0; scene.canvas.bytes()];
+        for pixel in translucent.chunks_exact_mut(4) { pixel.copy_from_slice(&[255, 0, 0, 128]); }
+        scene.overlay_layers.push(Frame { width: scene.canvas.width, height: scene.canvas.height, rgba: translucent, serial: 0 });
+        scene.freeze_characters();
+        let once = scene.frame.rgba.clone();
+        scene.refresh_composed_frame();
+        assert!(scene.frame.rgba == once, "translucent overlay applied twice after freeze");
+        scene.overlay_layers.clear();
+        scene.refresh_composed_frame();
+        assert!(scene.frame.rgba.chunks_exact(4).any(|p| p == [200, 200, 200, 255]), "frozen character lost after overlay clear");
+        assert!(scene.frame.rgba.chunks_exact(4).all(|p| p[0] == p[1]), "transient red overlay leaked into frozen base");
+    }
+
+    #[test]
     fn character_redraw_keeps_particles_and_frame_layers() {
         let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
         scene.particles = Some(ParticleState {
