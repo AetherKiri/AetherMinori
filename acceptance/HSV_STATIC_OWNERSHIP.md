@@ -1,0 +1,7 @@
+# Static HSV ownership reconciliation
+
+Independent read-only bounded native audit freshly verified executable9824732313d13136cb2300f33038a655ba480ae01cefc2749028d1b1748b4f9e. Scene6 state forwarded4df7f7..824 ->4ffb30 setter clamps H[-180,180],SV[-100,100] into BG42c/430/434 andST438/43c/440. No command parser clamp or S/V swap.
+
+Image tuple base:5070c8..fc checksBG triple then calls51f430(surface98,bgS,bgV). Static extras:5069ca..eb copiesST triple toobject4/8/c;506f29..48 checks them then calls51f430(surface,stS,stV). Both occur before Overlay then Screen then placement. H only gates this S/V call; no H parameter. First-stage base_spec surfaces1b8/2d8 do NOT use sceneBG/ST triples on observed static paths:50796f/507fc5 pass3 literalzero HSV args to generic504260; its5054de..f9 HSV gate therefore bypasses. Do not infer HSV ownership merely from Overlay bank scopes.
+
+Current isolated ef_sv_matrix_rgba(output,saturation,value) order is correct. Production remains state-only; dynamic51d860-class paths enter51ac50 and remain unknown, as do per-name overrides/change-reprocessing/cache lifetimes/reset/save/transition, alternatepixel formats/originalruntime pixels. This closes static per-asset routing only, not full standing renderer equivalence. All objdump commands exit0; no executable run or source edits by auditor. Raw report is subagent08fe21dc session handoff, not new REA-authenticated Evidence.
