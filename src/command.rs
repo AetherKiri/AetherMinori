@@ -116,6 +116,9 @@ impl CommandKind {
         }
     }
 
+    /// Historical engine-family coordinates, not an ef-specific validated map.
+    /// Verify registration/vtable against the selected executable before using
+    /// these diagnostics as reverse-engineering authority.
     pub const fn original_handler(self) -> OriginalHandler {
         match self {
             Self::Chain => OriginalHandler {

@@ -679,8 +679,9 @@ impl Vm {
             }
             CommandKind::Chain => {
                 let path = one_argument(command.name(), &arguments)?.to_owned();
-                // Both Chain::execute at 0x446AD0 and End::execute at 0x448560
-                // call the shared message/read-state finalizer at 0x456FA0.
+                // Shared reconstruction message finalization. Historical handler
+                // metadata is not ef authority: ef End executes at 0x4eeeb0
+                // through 0x4ddaa0; its persistence policy is audited separately.
                 self.end_message(events);
                 events.push(VmEvent::PersistGlobals);
                 self.state = VmState::PendingChain { path };

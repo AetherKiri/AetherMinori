@@ -1619,8 +1619,9 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
                     }
                     VmEvent::ScriptChanged(_) => {}
                     VmEvent::PersistGlobals => {
-                        // CommandChain ignores Variable::save's return value at
-                        // 0x446B06, so persistence failure cannot stop NEXT.
+                        // Reconstruction policy: report persistence failure without
+                        // stopping NEXT. Historical 0x446B06 metadata is not proof
+                        // of ef retail persistence/error semantics.
                         runtime.persistence_pending = true;
                         if let Err(error) = runtime.save_globals() {
                             runtime.error = safe_cstring(&error);
