@@ -749,6 +749,7 @@ impl SceneSystem {
                 self.particles = None;
                 self.wscroll = None;
                 self.cutin = None;
+                self.render_panel_frame();
                 Ok(())
             }
             "Snow" | "SnowH" | "Snow2" => self.start_particles(vfs, request),
@@ -3199,6 +3200,23 @@ fn decode_png(data: &[u8]) -> Result<Frame, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires MINORI_EF_ROOT pointing to a local ef installation"]
+    fn live_snow_sprite_animates_on_fixed_background_and_stop_redraws() {
+        let root = std::env::var_os("MINORI_EF_ROOT").expect("set MINORI_EF_ROOT");
+        let vfs = Vfs::mount_game(root).unwrap();
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        let request = EffectRequest { kind: "Snow".into(), resource: String::new(), first: 0, second: 0, third: 0 };
+        scene.start_effect(&vfs, &request).unwrap();
+        let before = scene.frame.rgba.clone();
+        assert!(before.chunks_exact(4).any(|pixel| pixel[0] > 0));
+        for _ in 0..60 { scene.tick_effect(16).unwrap(); }
+        assert_ne!(scene.frame.rgba, before);
+        let stop = EffectRequest { kind: "end".into(), ..request };
+        scene.start_effect(&vfs, &stop).unwrap();
+        assert!(scene.frame.rgba.chunks_exact(4).all(|pixel| pixel[..3] == [0, 0, 0]));
+    }
 
     #[test]
     fn particle_ticks_keep_particles_and_clear_removes_them() {
