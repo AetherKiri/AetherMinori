@@ -3341,6 +3341,26 @@ mod tests {
     }
 
     #[test]
+    fn native_overlay_channel_domain_matches_byte_instruction_reference() {
+        // 256 rows of source values x 256 destination channel values.
+        let strip = Frame { width:1, height:256, rgba:(0..256).flat_map(|s| [s as u8; 4]).collect(), serial:0 };
+        let mut output: Vec<u8> = (0..256).flat_map(|_| (0..256).flat_map(|d| [d as u8,d as u8,d as u8,91])).collect();
+        ef_overlay_strip(Canvas::new(256,256), &mut output, &strip);
+        for s in 0_u16..256 { for d in 0_u16..256 {
+            // Mirror native AL*DL, SHR8, clamp255, XOR255 sequence.
+            let inverse = d & 0x80 != 0;
+            let a = if inverse { s ^ 255 } else { s };
+            let b = if inverse { d ^ 255 } else { d };
+            let product = a * b;
+            let mut byte = (((u32::from(product) + 255) >> 8) & 255) * 2;
+            byte = byte.min(255);
+            if inverse { byte ^= 255; }
+            let i = (usize::from(s)*256 + usize::from(d))*4;
+            assert_eq!(&output[i..i+4], &[byte as u8,byte as u8,byte as u8,91], "s={s} d={d}");
+        }}
+    }
+
+    #[test]
     fn native_overlay_strip_quantization_alignment_and_alpha() {
         let strip = Frame { width: 2, height: 3, rgba: vec![
             255,255,255,255, 0,0,0,255,
