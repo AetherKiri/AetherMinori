@@ -3264,6 +3264,18 @@ mod tests {
         scene.refresh_composed_frame();
         scene.freeze_characters();
         assert_eq!(&scene.frame.rgba[..4], &[17, 29, 43, 255]);
+        scene.panel = Some(Frame { width: 1, height: 247, rgba: [73, 89, 101, 255].repeat(247), serial: 0 });
+        scene.transition = Some(TransitionState {
+            transition_type: 0, old_rgba: scene.frame.rgba.clone(), new_rgba: vec![0; scene.canvas.bytes()],
+            mask: None, tile_values: None, duration: 100, elapsed_ms: 0, progress: 0,
+        });
+        let displayed = scene.frame.rgba.clone();
+        scene.freeze_characters();
+        let target = &scene.transition.as_ref().unwrap().new_rgba;
+        let panel_offset = ((scene.canvas.height - 247 + scene.panel_offset_y()) * scene.canvas.width * 4) as usize;
+        assert_eq!(&target[panel_offset..panel_offset + 4], &[73, 89, 101, 255]);
+        assert_eq!(&target[..4], &[17, 29, 43, 255]);
+        assert_eq!(scene.frame.rgba, displayed);
     }
 
     #[test]
