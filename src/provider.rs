@@ -1588,7 +1588,7 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
                                     .scene
                                     .as_mut()
                                     .ok_or_else(|| "scene system is not initialized".to_string())?
-                                    .apply_overlay(vfs, &request.images)
+                                    .apply_overlay(vfs, request.overlay_slots.as_ref().ok_or_else(|| "overlay slot mapping missing".to_string())?)
                             });
                         if let Err(error) = result {
                             return runtime.fail(error, INVALID_STATE);

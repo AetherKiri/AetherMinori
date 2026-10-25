@@ -170,6 +170,13 @@ pub(crate) struct ManualSceneState {
     pub overlay_layers: Vec<Frame>,
     pub frame_stills: Vec<Frame>,
     pub camera: Option<ManualCameraState>,
+    pub native_overlay: NativeOverlayState,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NativeOverlayState {
+    pub slots: [Option<Frame>; 3],
+    stage: Option<StageEffectLayers>,
 }
 
 /// Static inputs for subsequent camera recrops, not running effect/scroll state.
@@ -233,7 +240,7 @@ struct TransitionState {
     progress: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StageEffectLayers {
     base: Frame,
     scrolling: Vec<(Frame, i32, i32)>,
@@ -318,6 +325,7 @@ pub struct SceneSystem {
     particles: Option<ParticleState>,
     screen_layers: Vec<Frame>,
     overlay_layers: Vec<Frame>,
+    overlay_slots: [Option<Frame>; 3],
     frame_stills: Vec<Frame>,
     hsv_filter: HsvFilter,
     rand_state: u32,
@@ -368,6 +376,7 @@ impl SceneSystem {
             particles: None,
             screen_layers: Vec::new(),
             overlay_layers: Vec::new(),
+            overlay_slots: Default::default(),
             frame_stills: Vec::new(),
             hsv_filter: HsvFilter::default(),
         }
@@ -442,6 +451,7 @@ impl SceneSystem {
             rand_state: self.rand_state,
             screen_layers: self.screen_layers.clone(),
             overlay_layers: self.overlay_layers.clone(),
+            native_overlay: NativeOverlayState { slots: self.overlay_slots.clone(), stage: self.effect_layers.clone() },
             frame_stills: self.frame_stills.clone(),
             camera: Some(ManualCameraState {
                 source: self.background_source.clone(),
@@ -550,6 +560,7 @@ impl SceneSystem {
         self.particles = None;
         self.screen_layers.clear();
         self.overlay_layers.clear();
+        self.overlay_slots = Default::default();
         self.frame_stills.clear();
         self.hsv_filter = HsvFilter::default();
         self.camera_x = 0;
@@ -584,6 +595,21 @@ impl SceneSystem {
         self.rand_state = state.rand_state;
         self.screen_layers = state.screen_layers;
         self.overlay_layers = state.overlay_layers;
+        let valid = |frame: &Frame| frame.width > 0 && frame.height > 0 &&
+            (frame.width as usize).checked_mul(frame.height as usize)
+                .and_then(|n| n.checked_mul(4)) == Some(frame.rgba.len());
+        if state.native_overlay.slots.iter().flatten().any(|f| !valid(f)) ||
+            state.native_overlay.stage.as_ref().is_some_and(|s| !valid(&s.base) ||
+                s.scrolling.iter().chain(&s.foreground).any(|(f, _, _)| !valid(f))) {
+            return Err("manual save overlay source has invalid dimensions".into());
+        }
+        self.overlay_slots = state.native_overlay.slots;
+        if let Some(stage) = state.native_overlay.stage {
+            // Saved viewport/source are authoritative (including frozen pixels).
+            // Retain originals for a later explicit overlay change, not an
+            // unsolicited redraw while restoring a possibly dynamic snapshot.
+            self.effect_layers = Some(stage);
+        }
         self.frame_stills = state.frame_stills;
         for saved in state.characters {
             let mut image = decode_png(&vfs.read(&saved.image_name)?)?;
@@ -935,11 +961,13 @@ impl SceneSystem {
             .effect_layers
             .as_ref()
             .ok_or_else(|| "WScroll2 stage layers are unavailable".to_string())?;
-        let mut output = crop_background(self.canvas, &layers.base, self.camera_x, self.camera_y)?;
-        for (layer, x, y) in &layers.scrolling {
+        let base = overlay_surface(&layers.base, self.overlay_slots[1].as_ref());
+        let mut output = crop_background(self.canvas, &base, self.camera_x, self.camera_y)?;
+        for (raw, x, y) in &layers.scrolling {
+            let layer = overlay_surface(raw, self.overlay_slots[2].as_ref());
             composite_wrapped_horizontal(
                 &mut output,
-                layer,
+                &layer,
                 self.camera_x
                     .saturating_add(effect.offset)
                     .saturating_sub(*x),
@@ -1423,11 +1451,34 @@ impl SceneSystem {
         Ok(())
     }
 
-    /// .overlay: gradient strips drawn over the characters.
-    pub fn apply_overlay(&mut self, vfs: &Vfs, images: &[String]) -> Result<(), String> {
-        self.overlay_layers = decode_strips(self.canvas, vfs, images)?;
+    /// Native slots: bank1 (scope unresolved), background, standing art.
+    /// Raw dimensions are essential: alignment is destination-asset-local.
+    pub fn apply_overlay(&mut self, vfs: &Vfs, slots: &[String; 3]) -> Result<(), String> {
+        let mut decoded = [None, None, None];
+        for (slot, operand) in decoded.iter_mut().zip(slots) {
+            let name = operand.strip_prefix('[')
+                .and_then(|rest| rest.find(']').map(|end| &rest[end + 1..]))
+                .unwrap_or(operand);
+            if !name.is_empty() && name != "*" {
+                *slot = Some(decode_png(&vfs.read(name)?)?);
+            }
+        }
+        self.overlay_slots = decoded;
+        self.overlay_layers.clear();
+        self.rebuild_overlay_stage()?;
         self.refresh_composed_frame();
         Ok(())
+    }
+
+    fn rebuild_overlay_stage(&mut self) -> Result<(), String> {
+        let Some(layers) = &self.effect_layers else { return Ok(()); };
+        let mut source = overlay_surface(&layers.base, self.overlay_slots[1].as_ref());
+        for (raw, x, y) in &layers.scrolling {
+            let image = overlay_surface(raw, self.overlay_slots[2].as_ref());
+            composite_source_over(&mut source, &image, *x, *y);
+        }
+        self.background_source = source;
+        if self.wscroll.is_some() { self.render_wscroll() } else { self.recrop_stage_background() }
     }
 
     /// .frame: full-size stills drawn over the layers but under the message panel.
@@ -1455,7 +1506,7 @@ impl SceneSystem {
 
     fn compose_current_scene(&self) -> Vec<u8> {
         let mut composed =
-            compose_characters(self.canvas, &self.background_rgba, &self.characters);
+            compose_characters_overlay(self.canvas, &self.background_rgba, &self.characters, self.overlay_slots[2].as_ref());
         if let Some(particles) = self.particles.as_ref() {
             composite_particles(self.canvas, &mut composed, particles);
         }
@@ -1631,6 +1682,7 @@ impl SceneSystem {
     ) -> Result<bool, String> {
         let mut image = decode_png(&vfs.read(&request.image)?)?;
         let base = image.clone();
+        image = overlay_surface(&base, self.overlay_slots[1].as_ref());
         let mut scrolling = Vec::with_capacity(request.extras.len());
         let mut foreground = Vec::new();
         for extra in &request.extras {
@@ -1642,7 +1694,8 @@ impl SceneSystem {
             // to that placement, so a 594x621 sprite at 550 stands on the right
             // of the frame with its head cropped, as the retail build shows.
             let (x, y) = extra_origin(self.canvas, &overlay, extra);
-            composite_source_over(&mut image, &overlay, x, y);
+            let filtered = overlay_surface(&overlay, self.overlay_slots[2].as_ref());
+            composite_source_over(&mut image, &filtered, x, y);
             scrolling.push((overlay, x, y));
         }
         // The base spec is a screen-space overlay: past_window.png and friends are
@@ -1945,14 +1998,27 @@ fn composite_full_frame(output: &mut [u8], layer: &Frame) {
 }
 
 
+fn overlay_surface(raw: &Frame, strip: Option<&Frame>) -> Frame {
+    let mut image = raw.clone();
+    if let Some(strip) = strip {
+        ef_overlay_strip(Canvas::new(image.width, image.height), &mut image.rgba, strip);
+    }
+    image
+}
+
 /// Native 0x5202c0 row-strip Overlay math for the observed bottom-aligned (-1) call.
 /// Alpha belongs to the destination; source alpha is not an opacity.
 #[allow(dead_code)]
 fn ef_overlay_strip(canvas: Canvas, output: &mut [u8], strip: &Frame) {
-    if strip.width == 0 || strip.height == 0 { return; }
+    ef_overlay_strip_region(canvas, output, strip, 0);
+}
+
+fn ef_overlay_strip_region(canvas: Canvas, output: &mut [u8], strip: &Frame, offset_y: i32) {
+    if canvas.width == 0 || strip.width == 0 || strip.height == 0 { return; }
     for (y, row) in output.chunks_exact_mut(canvas.width as usize * 4).enumerate() {
         // The native short-strip path extends the first source colour upward.
-        let source_y = (y as i64 + i64::from(strip.height) - i64::from(canvas.height)).max(0) as usize;
+        let source_y = (y as i64 + i64::from(offset_y) + i64::from(strip.height) - i64::from(canvas.height))
+            .clamp(0, i64::from(strip.height) - 1) as usize;
         let start = source_y * strip.width as usize * 4;
         let Some(source) = strip.rgba.get(start..start + 4) else { continue; };
         for pixel in row.chunks_exact_mut(4) {
@@ -2334,6 +2400,12 @@ fn compose_characters(
     background: &[u8],
     characters: &HashMap<u32, Character>,
 ) -> Vec<u8> {
+    compose_characters_overlay(canvas, background, characters, None)
+}
+
+fn compose_characters_overlay(
+    canvas: Canvas, background: &[u8], characters: &HashMap<u32, Character>, strip: Option<&Frame>,
+) -> Vec<u8> {
     let mut output = background.to_vec();
     let mut ordered: Vec<_> = characters.values().collect();
     ordered.sort_by_key(|character| character.order);
@@ -2341,6 +2413,25 @@ fn compose_characters(
         if !character.current || !character.visible || character.blend_rate <= 0 {
             continue;
         }
+        // Render-local copies only; cached images/animation surfaces remain raw.
+        let mut filtered;
+        let character = if let Some(strip) = strip {
+            filtered = character.clone();
+            filtered.image = overlay_surface(&character.image, Some(strip));
+            if let Some(secondary) = &character.secondary_image {
+                filtered.secondary_image = Some(overlay_surface(secondary, Some(strip)));
+            }
+            if let Some(mouth) = &mut filtered.mouth {
+                for patch in [&mut mouth.medium, &mut mouth.open].into_iter()
+                    .chain(mouth.open_eye.iter_mut()).chain(mouth.closed_eye.iter_mut()) {
+                    // Patch rows use the parent sprite's coordinates, not their
+                    // own bottom edge (which would create a mouth/eye tint seam).
+                    ef_overlay_strip_region(Canvas::new(patch.image.width, character.image.height),
+                        &mut patch.image.rgba, strip, patch.y);
+                }
+            }
+            &filtered
+        } else { character };
         composite_character_surface(canvas, &mut output, character, &character.image);
         if let Some(mouth) = &character.mouth {
             if let Some(eye) = character
@@ -3341,6 +3432,103 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires MINORI_EF_ROOT pointing to a local ef installation"]
+    fn live_gym_native_overlay_preserves_background_and_restores_originals() {
+        let vfs = Vfs::mount_game(std::env::var_os("MINORI_EF_ROOT").expect("set MINORI_EF_ROOT")).unwrap();
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        let request = StageRequest { base_spec: "*".into(), base_x:0, base_y:0,
+            image:"bgc_sch006a01_00_stm.png".into(), x:0,y:0,
+            extras:vec![StageExtra { name:"stm_kei06f01.png".into(),first:200,second:0 }] };
+        scene.apply_stage(&vfs, &request, None).unwrap();
+        let original = scene.frame.rgba.clone();
+        let slots = [String::new(), "*".into(), "or_kei00a.png".into()];
+        scene.apply_overlay(&vfs, &slots).unwrap();
+        let tinted = scene.frame.rgba.clone();
+        assert_ne!(tinted, original);
+        assert!(scene.overlay_layers.is_empty());
+        let raw = scene.effect_layers.as_ref().unwrap();
+        let (sprite, x, y) = &raw.scrolling[0];
+        let mut expected = raw.base.clone();
+        composite_source_over(&mut expected, &overlay_surface(sprite, scene.overlay_slots[2].as_ref()), *x, *y);
+        assert_eq!(tinted, crop_background(scene.canvas, &expected, 0, 0).unwrap().rgba);
+        assert!(tinted.chunks_exact(4).zip(original.chunks_exact(4)).filter(|(a,b)| a==b).count() > 100_000,
+            "opaque strip covered the untouched gym background");
+        scene.apply_stage(&vfs, &request, None).unwrap();
+        assert_eq!(scene.frame.rgba, tinted);
+        scene.apply_overlay(&vfs, &slots).unwrap();
+        assert_eq!(scene.frame.rgba, tinted);
+        let capture = scene.save_capture();
+        let state: ManualSceneState = bincode::deserialize(&bincode::serialize(&scene.manual_state()).unwrap()).unwrap();
+        scene.apply_overlay(&vfs, &[String::new(), "*".into(), "*".into()]).unwrap();
+        assert_eq!(scene.frame.rgba, original);
+        scene.restore_manual_state(&vfs, capture, state).unwrap();
+        scene.refresh_composed_frame();
+        assert_eq!(scene.frame.rgba, tinted);
+        assert_eq!(scene.overlay_slots[2].as_ref().unwrap().height, 601);
+        scene.apply_overlay(&vfs, &[String::new(), "*".into(), "*".into()]).unwrap();
+        assert_eq!(scene.frame.rgba, original);
+    }
+
+    #[test]
+    fn native_overlay_stage_rebuild_is_asset_local_reversible_and_idempotent() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        let base = Frame { width: 800, height: 600,
+            rgba: [31, 73, 115, 255].repeat(800*600), serial: 0 };
+        let extra = Frame { width: 1, height: 2, rgba: [100, 100, 100, 255].repeat(2), serial: 0 };
+        let foreground = Frame { width: 1, height: 1, rgba: vec![7, 8, 9, 255], serial: 0 };
+        scene.effect_layers = Some(StageEffectLayers { base: base.clone(),
+            scrolling: vec![(extra.clone(), 10, 20)], foreground: vec![(foreground, 0, 0)] });
+        scene.rebuild_overlay_stage().unwrap();
+        let original = scene.background_rgba.clone();
+        let strip = Frame { width: 1, height: 3,
+            rgba: vec![255,255,255,255, 0,64,128,255, 255,192,128,255], serial: 0 };
+        scene.overlay_slots[2] = Some(strip.clone());
+        scene.rebuild_overlay_stage().unwrap();
+        let tinted = scene.background_rgba.clone();
+        let expected = overlay_surface(&extra, Some(&strip));
+        let p = (20*800+10)*4;
+        assert_eq!(&tinted[p..p+4], &expected.rgba[..4]);
+        assert_eq!(&tinted[..4], &[7,8,9,255]);
+        assert_eq!(&tinted[4..8], &base.rgba[4..8]);
+        scene.rebuild_overlay_stage().unwrap();
+        assert_eq!(scene.background_rgba, tinted);
+        let saved: ManualSceneState = bincode::deserialize(&bincode::serialize(&scene.manual_state()).unwrap()).unwrap();
+        assert_eq!(saved.native_overlay.slots, scene.overlay_slots);
+        assert_eq!(saved.native_overlay.stage, scene.effect_layers);
+        scene.overlay_slots[2] = None;
+        scene.rebuild_overlay_stage().unwrap();
+        assert_eq!(scene.background_rgba, original);
+        scene.overlay_slots[1] = Some(strip);
+        scene.rebuild_overlay_stage().unwrap();
+        assert_eq!(&scene.background_rgba[p..p+4], &extra.rgba[..4]);
+        assert_ne!(&scene.background_rgba[4..8], &original[4..8]);
+        assert_eq!(scene.effect_layers.as_ref().unwrap().base, base);
+    }
+
+    #[test]
+    fn native_overlay_character_and_animation_patches_use_parent_asset_rows() {
+        let mut actor = character(100, true, true);
+        actor.image = Frame { width: 1, height: 3, rgba: [100,100,100,255].repeat(3), serial: 0 };
+        let patch = MouthOverlay { image: Frame { width:1,height:1,rgba:vec![80,90,100,255],serial:0 }, x:0,y:1 };
+        actor.mouth = Some(MouthAnimation { actor: "synthetic".into(), medium:patch.clone(),
+            open:patch.clone(), open_eye:None, closed_eye:Some(patch.clone()) });
+        actor.mouth_state = 1;
+        actor.blink_state = true;
+        let actors = HashMap::from([(1, actor.clone())]);
+        let strip = Frame { width:1,height:3,rgba:vec![0,0,0,0, 128,64,255,0, 255,255,255,0],serial:0 };
+        let background = [23,45,67,255].repeat(6);
+        let output = compose_characters_overlay(Canvas::new(2,3), &background, &actors, Some(&strip));
+        let mut expected = patch.image.rgba.clone();
+        ef_overlay_strip_region(Canvas::new(1,3), &mut expected, &strip, 1);
+        assert_eq!(&output[8..12], &expected[..]);
+        assert_eq!(&output[4..8], &background[4..8]);
+        assert_eq!(actors[&1].image, actor.image);
+        assert_eq!(actors[&1].mouth.as_ref().unwrap().medium.image, patch.image);
+        assert_eq!(compose_characters_overlay(Canvas::new(2,3), &background, &actors, Some(&strip)), output);
+        assert_ne!(compose_characters_overlay(Canvas::new(2,3), &background, &actors, None), output);
+    }
+
+    #[test]
     fn native_overlay_channel_domain_matches_byte_instruction_reference() {
         // 256 rows of source values x 256 destination channel values.
         let strip = Frame { width:1, height:256, rgba:(0..256).flat_map(|s| [s as u8; 4]).collect(), serial:0 };
@@ -3804,6 +3992,7 @@ mod tests {
             particles: None,
             screen_layers: Vec::new(),
             overlay_layers: Vec::new(),
+            overlay_slots: Default::default(),
             frame_stills: Vec::new(),
             hsv_filter: HsvFilter::default(),
         };
@@ -3927,6 +4116,7 @@ mod tests {
             particles: None,
             screen_layers: Vec::new(),
             overlay_layers: Vec::new(),
+            overlay_slots: Default::default(),
             frame_stills: Vec::new(),
             hsv_filter: HsvFilter::default(),
         };
@@ -3985,6 +4175,7 @@ mod tests {
             particles: None,
             screen_layers: Vec::new(),
             overlay_layers: Vec::new(),
+            overlay_slots: Default::default(),
             frame_stills: Vec::new(),
             hsv_filter: HsvFilter::default(),
         };
@@ -4583,6 +4774,7 @@ mod tests {
             particles: None,
             screen_layers: Vec::new(),
             overlay_layers: Vec::new(),
+            overlay_slots: Default::default(),
             frame_stills: Vec::new(),
             hsv_filter: HsvFilter::default(),
         };

@@ -181,16 +181,15 @@ pub struct StageRequest {
 
 /// A .screen or .overlay layer set.
 ///
-/// Both commands name one or more 1-pixel-wide gradient strips: the engine
-/// stretches each strip across the whole surface, so the strip row colours
-/// become the frame vertical colour ramp. .screen goes below the scene,
-/// .overlay above the characters, and .frame adds a full-size still on top.
+/// Screen keeps its historical strip composition. Overlay preserves three native
+/// resource slots: bank1 (scope unresolved), background, and standing art. The
+/// latter two filter individual asset RGB before placement, not screen coverage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayerRequest {
     /// One resource name per screen depth. An empty list clears the layer.
     pub images: Vec<String>,
     /// Verified overlay command slots, before wildcard/prefix normalization.
-    /// Rendering still uses images until native per-slot consumers are recovered.
+    /// Renderer consumes this mapping directly; images is the screen-only path.
     pub overlay_slots: Option<[String; 3]>,
 }
 
