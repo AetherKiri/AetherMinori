@@ -523,6 +523,12 @@ impl SceneSystem {
         self.frame = Frame { serial, ..frame };
         self.background_source = self.frame.clone();
         self.background_rgba = self.frame.rgba.clone();
+        // The capture is a replacement timeline, never a base for old effects.
+        self.particles = None;
+        self.screen_layers.clear();
+        self.overlay_layers.clear();
+        self.frame_stills.clear();
+        self.hsv_filter = HsvFilter::default();
         self.camera_x = 0;
         self.camera_y = 0;
         self.scroll = None;
@@ -3197,6 +3203,27 @@ mod tests {
             assert_eq!(&scene.frame.rgba[..4], &[255; 4]);
         }
         scene.clear_effect().unwrap();
+        assert_eq!(&scene.frame.rgba[..3], &[0; 3]);
+    }
+
+    #[test]
+    fn restoring_capture_discards_old_particle_and_layer_state() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        scene.particles = Some(ParticleState {
+            sprite: Frame { width: 1, height: 1, rgba: vec![255; 4], serial: 0 },
+            flakes: vec![Particle { x: 0.0, y: 0.0, speed: 0.0, sway: 0.0, phase: 0.0 }],
+            horizontal_drift: 0,
+        });
+        let layer = Frame { width: 1, height: 1, rgba: vec![17, 29, 43, 255], serial: 0 };
+        scene.screen_layers.push(layer.clone());
+        scene.overlay_layers.push(layer.clone());
+        scene.frame_stills.push(layer);
+        let capture = Frame { width: scene.canvas.width, height: scene.canvas.height, rgba: vec![0; scene.canvas.bytes()], serial: 0 };
+        scene.restore_save_capture(capture).unwrap();
+        scene.tick_effect(16).unwrap();
+        scene.render_panel_frame();
+        assert!(scene.particles.is_none());
+        assert!(scene.screen_layers.is_empty() && scene.overlay_layers.is_empty() && scene.frame_stills.is_empty());
         assert_eq!(&scene.frame.rgba[..3], &[0; 3]);
     }
 

@@ -420,6 +420,8 @@ impl Runtime {
             })?;
         }
         self.current_se = [None, None, None];
+        self.current_effect = None;
+        self.effect_fading_out = false;
         self.pending_transition = None;
         self.pending_stage = None;
         self.pending_panel = None;
