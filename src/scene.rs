@@ -2010,6 +2010,25 @@ fn overlay_surface(raw: &Frame, strip: Option<&Frame>) -> Frame {
     image
 }
 
+/// Native 0x51ff70 Screen strip: complement byte product, INC AH, complement.
+/// Quantization is 254 - product/256, not textbook Screen divided by 255.
+#[allow(dead_code)]
+fn ef_screen_strip(canvas: Canvas, output: &mut [u8], strip: &Frame) {
+    if canvas.width == 0 || strip.width == 0 || strip.height == 0 { return; }
+    for (y, row) in output.chunks_exact_mut(canvas.width as usize * 4).enumerate() {
+        let source_y = (y as i64 + i64::from(strip.height) - i64::from(canvas.height)).max(0) as usize;
+        let start = source_y * strip.width as usize * 4;
+        let Some(source) = strip.rgba.get(start..start + 4) else { continue; };
+        for pixel in row.chunks_exact_mut(4) {
+            if pixel[3] == 0 { continue; }
+            for channel in 0..3 {
+                let product = (255 - u32::from(source[channel])) * (255 - u32::from(pixel[channel]));
+                pixel[channel] = (254 - (product >> 8)) as u8;
+            }
+        }
+    }
+}
+
 /// Native 0x5202c0 row-strip Overlay math for the observed bottom-aligned (-1) call.
 /// Alpha belongs to the destination; source alpha is not an opacity.
 #[allow(dead_code)]
@@ -3572,6 +3591,26 @@ mod tests {
         scene.overlay_slots[0] = None;
         scene.rebuild_overlay_stage().unwrap();
         assert_eq!(&scene.background_rgba[..4], &raw.rgba);
+    }
+
+    #[test]
+    fn native_screen_channel_domain_matches_mul_inc_ah_xor() {
+        let strip = Frame {width:1,height:256,rgba:(0..256).flat_map(|s| [s as u8;4]).collect(),serial:0};
+        let mut output: Vec<u8> = (0..256).flat_map(|_| (0..256).flat_map(|d| [d as u8,d as u8,d as u8,37])).collect();
+        ef_screen_strip(Canvas::new(256,256), &mut output, &strip);
+        for s in 0_u16..256 { for d in 0_u16..256 {
+            let ax = (s ^ 255) * (d ^ 255);
+            let ah = ((ax >> 8) as u8).wrapping_add(1);
+            let expected = ah ^ 255;
+            let i = (usize::from(s)*256 + usize::from(d))*4;
+            assert_eq!(&output[i..i+4], &[expected,expected,expected,37]);
+        }}
+        let mut transparent = vec![7,99,200,0];
+        ef_screen_strip(Canvas::new(1,1), &mut transparent, &Frame {width:1,height:1,rgba:vec![255,255,255,0],serial:0});
+        assert_eq!(transparent, [7,99,200,0]);
+        let mut opaque = vec![0,128,255,255];
+        ef_screen_strip(Canvas::new(1,1), &mut opaque, &Frame {width:1,height:1,rgba:vec![0,0,0,0],serial:0});
+        assert_eq!(opaque, [0,128,254,255]);
     }
 
     #[test]
