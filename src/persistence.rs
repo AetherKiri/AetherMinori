@@ -441,6 +441,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn version_four_scene_migrates_from_original_binary_layout() {
+        // Build the old envelope independently of the current v5 writer.
+        let mut payload = Vec::new();
+        push_string(&mut payload, "legacy").unwrap();
+        push_string(&mut payload, "100_01.sc").unwrap();
+        payload.extend_from_slice(&37_u64.to_le_bytes());
+        push_variables(&mut payload, &HashMap::from([("FLAG".into(), 7)])).unwrap();
+        push_variables(&mut payload, &HashMap::new()).unwrap();
+        payload.extend_from_slice(&[1, 0]); // control / skip
+        payload.extend_from_slice(&0_u32.to_le_bytes()); // seen messages
+        payload.extend_from_slice(&[0, 0, 1]); // no message/BGM, scene present
+        let legacy_scene = (vec![9_u8; 4], Option::<crate::scene::Frame>::None, Vec::<crate::scene::ManualCharacterState>::new(), 71_u32);
+        let scene = bincode::serialize(&legacy_scene).unwrap();
+        payload.extend_from_slice(&(scene.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&scene);
+        payload.extend_from_slice(&1_u32.to_le_bytes());
+        payload.extend_from_slice(&1_u32.to_le_bytes());
+        payload.extend_from_slice(&[1, 2, 3, 255]);
+        let mut encoded = MANUAL_SAVE_MAGIC.to_vec();
+        encoded.extend_from_slice(&4_u32.to_le_bytes());
+        encoded.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        encoded.extend_from_slice(&compress_to_vec_zlib(&payload, 6));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("legacy.sav");
+        fs::write(&path, encoded).unwrap();
+        let save = load_manual_slot(&path).unwrap().unwrap();
+        assert_eq!(save.name, "legacy");
+        assert_eq!(save.pc, Some(37));
+        assert_eq!(save.globals.get("FLAG"), Some(&7));
+        assert_eq!(save.rgba, [1, 2, 3, 255]);
+        let state = save.scene.as_ref().unwrap();
+        assert_eq!(state.background_rgba, vec![9; 4]);
+        assert_eq!(state.rand_state, 71);
+        assert!(state.screen_layers.is_empty() && state.overlay_layers.is_empty() && state.frame_stills.is_empty());
+        let upgraded = directory.path().join("upgraded.sav");
+        save_manual_slot(&upgraded, &save).unwrap();
+        assert_eq!(&fs::read(&upgraded).unwrap()[8..12], &5_u32.to_le_bytes());
+        assert_eq!(load_manual_slot(&upgraded).unwrap().unwrap(), save);
+    }
+
+    #[test]
     fn manual_save_round_trips_metadata_globals_and_frame() {
         let save = ManualSaveData {
             name: "春の森".into(),
