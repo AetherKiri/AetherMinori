@@ -166,6 +166,12 @@ pub(crate) struct ManualSceneState {
     pub panel: Option<Frame>,
     pub characters: Vec<ManualCharacterState>,
     pub rand_state: u32,
+    #[serde(default)]
+    pub screen_layers: Vec<Frame>,
+    #[serde(default)]
+    pub overlay_layers: Vec<Frame>,
+    #[serde(default)]
+    pub frame_stills: Vec<Frame>,
 }
 
 #[derive(Debug, Clone)]
@@ -427,6 +433,9 @@ impl SceneSystem {
             panel: self.panel.clone(),
             characters,
             rand_state: self.rand_state,
+            screen_layers: self.screen_layers.clone(),
+            overlay_layers: self.overlay_layers.clone(),
+            frame_stills: self.frame_stills.clone(),
         }
     }
 
@@ -565,6 +574,9 @@ impl SceneSystem {
         };
         self.panel = state.panel;
         self.rand_state = state.rand_state;
+        self.screen_layers = state.screen_layers;
+        self.overlay_layers = state.overlay_layers;
+        self.frame_stills = state.frame_stills;
         for saved in state.characters {
             let mut image = decode_png(&vfs.read(&saved.image_name)?)?;
             if let Some((width, height)) = saved.scaled_size {
@@ -3204,6 +3216,19 @@ mod tests {
         }
         scene.clear_effect().unwrap();
         assert_eq!(&scene.frame.rgba[..3], &[0; 3]);
+    }
+
+    #[test]
+    fn manual_scene_layers_roundtrip() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        let layer = Frame { width: 1, height: 1, rgba: vec![17, 29, 43, 255], serial: 0 };
+        scene.screen_layers.push(layer.clone());
+        scene.overlay_layers.push(layer.clone());
+        scene.frame_stills.push(layer);
+        let state = scene.manual_state();
+        let encoded = bincode::serialize(&state).unwrap();
+        let decoded: ManualSceneState = bincode::deserialize(&encoded).unwrap();
+        assert_eq!(decoded, state);
     }
 
     #[test]

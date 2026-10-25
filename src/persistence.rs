@@ -202,7 +202,7 @@ pub(crate) fn save_manual_slot(path: &Path, save: &ManualSaveData) -> Result<(),
     let compressed = compress_to_vec_zlib(&payload, 6);
     let mut output = Vec::with_capacity(16 + compressed.len());
     output.extend_from_slice(MANUAL_SAVE_MAGIC);
-    output.extend_from_slice(&4_u32.to_le_bytes());
+    output.extend_from_slice(&5_u32.to_le_bytes());
     output.extend_from_slice(
         &u32::try_from(payload.len())
             .map_err(|_| "manual save is too large")?
@@ -222,7 +222,7 @@ pub(crate) fn decode_manual_save(data: &[u8]) -> Result<ManualSaveData, String> 
         return Err("manual save header is invalid".into());
     }
     let version = u32::from_le_bytes(data[8..12].try_into().unwrap());
-    if !matches!(version, 1..=4) {
+    if !matches!(version, 1..=5) {
         return Err("manual save version is unsupported".into());
     }
     let expected = u32::from_le_bytes(data[12..16].try_into().unwrap()) as usize;
@@ -301,8 +301,18 @@ pub(crate) fn decode_manual_save(data: &[u8]) -> Result<ManualSaveData, String> 
         if offset + len > payload.len() {
             return Err("manual scene is truncated".into());
         }
-        let scene = bincode::deserialize(&payload[offset..offset + len])
-            .map_err(|error| format!("decode manual scene: {error}"))?;
+        let scene = if version >= 5 {
+            bincode::deserialize(&payload[offset..offset + len])
+                .map_err(|error| format!("decode manual scene: {error}"))?
+        } else {
+            // v4 bincode has a fixed four-field layout; serde defaults do not
+            // make absent sequence fields backward compatible.
+            let (background_rgba, panel, characters, rand_state) =
+                bincode::deserialize(&payload[offset..offset + len])
+                    .map_err(|error| format!("decode legacy manual scene: {error}"))?;
+            ManualSceneState { background_rgba, panel, characters, rand_state,
+                screen_layers: Vec::new(), overlay_layers: Vec::new(), frame_stills: Vec::new() }
+        };
         offset += len;
         Some(scene)
     } else {
@@ -454,6 +464,9 @@ mod tests {
                 panel: None,
                 characters: Vec::new(),
                 rand_state: 7,
+                screen_layers: vec![crate::scene::Frame { width: 1, height: 1, rgba: vec![1, 2, 3, 255], serial: 0 }],
+                overlay_layers: Vec::new(),
+                frame_stills: Vec::new(),
             }),
             globals: HashMap::from([("FLAG".into(), 3)]),
             locals: HashMap::from([("LOCAL".into(), -2)]),
