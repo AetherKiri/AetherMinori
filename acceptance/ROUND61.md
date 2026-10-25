@@ -1,0 +1,5 @@
+# Round 61 — live manual-save restore acceptance
+
+Added opt-in MINORI_EF_ROOT test using real installed ef scripts/assets. Provider opens 100_01.sc under e selector in a temporary writable directory, advances to message >=270 at WaitingInput, records VM state, current message and scene pixels, writes slot 0, advances, reloads and compares all three exactly. Advances another 20 updates and confirms the VM no longer has the restored snapshot state. Audio/movie cache files are cleaned through existing helpers. Host callbacks are deliberately discarded, so this does not verify text widgets/audio playback or save-menu UI.
+
+Explicit local-install test passed in 1.56 seconds. Default suite: 101 passed, 5 ignored; 1 CLI test passed; diff check passed. No production fix was necessary and no fresh screenshot was inspected. This confirms one supported stable-boundary save roundtrip in the reconstructed engine, not arbitrary save points, original save compatibility, Windows retail or Aether host acceptance. Overall objective remains incomplete.

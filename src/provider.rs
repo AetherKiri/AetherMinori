@@ -2197,6 +2197,46 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires MINORI_EF_ROOT pointing to a local ef installation"]
+    fn live_manual_save_restores_dialogue_and_continues() {
+        unsafe extern "C" fn discard(_: *mut std::ffi::c_void, _: *const std::ffi::c_char, _: *const std::ffi::c_char) {}
+        let root = std::env::var("MINORI_EF_ROOT").expect("set MINORI_EF_ROOT");
+        let writable = tempfile::tempdir().unwrap();
+        let mut runtime = empty_runtime();
+        runtime.writable_path = writable.path().to_path_buf();
+        runtime.cache_path = writable.path().to_path_buf();
+        runtime.platform_request = Some(discard);
+        runtime.language = crate::script::Language::English;
+        runtime.start_script = Some("100_01.sc".into());
+        let handle = std::ptr::addr_of_mut!(runtime).cast();
+        let root = std::ffi::CString::new(root).unwrap();
+        assert_eq!(unsafe { super::open_game(handle, root.as_ptr(), std::ptr::null()) }, super::OK);
+        for step in 0..4000 {
+            assert_eq!(unsafe { super::tick(handle, 120) }, super::OK);
+            if runtime.vm.as_ref().unwrap().state() == &crate::vm::VmState::WaitingInput {
+                if runtime.current_message.as_ref().is_some_and(|message| message.id >= 270) { break; }
+                if step % 5 == 0 { runtime.vm.as_mut().unwrap().advance_input(); }
+            }
+        }
+        assert!(runtime.current_message.as_ref().is_some_and(|message| message.id >= 270));
+        let before = runtime.vm.as_ref().unwrap().manual_state().unwrap();
+        let message = runtime.current_message.clone();
+        let pixels = runtime.scene.as_ref().unwrap().save_capture().rgba;
+        runtime.save_manual_game(0, "roundtrip").unwrap();
+        runtime.vm.as_mut().unwrap().advance_input();
+        assert_eq!(unsafe { super::tick(handle, 120) }, super::OK);
+        runtime.load_manual_game(0).unwrap();
+        assert_eq!(runtime.vm.as_ref().unwrap().manual_state().unwrap(), before);
+        assert_eq!(runtime.current_message, message);
+        assert_eq!(runtime.scene.as_ref().unwrap().save_capture().rgba, pixels);
+        runtime.vm.as_mut().unwrap().advance_input();
+        for _ in 0..20 { assert_eq!(unsafe { super::tick(handle, 120) }, super::OK); }
+        assert_ne!(runtime.vm.as_ref().unwrap().manual_state().ok(), Some(before));
+        runtime.clear_audio();
+        runtime.clear_movie();
+    }
+
+    #[test]
     fn malformed_save_dialog_response_preserves_pending_slot_for_retry() {
         let mut runtime = empty_runtime();
         runtime.pending_save_slot = Some(4);
