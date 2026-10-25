@@ -1,5 +1,9 @@
 # ef graphics-command fidelity: audit and scoped state correction
 
+## Overlay follow-up (2026-10-25)
+
+The former screen/overlay opacity and ownership uncertainty has been narrowed: production Overlay now uses native quantized per-row RGB math on individual assets (first stage argument / background tuple / standing extras respectively), preserving alpha. See [first-slot integration](<../../acceptance/FIRST_OVERLAY_INTEGRATION.md>) and [native Overlay integration](<../../acceptance/NATIVE_OVERLAY_INTEGRATION.md>). The isolated native Screen kernel is also recovered, but Screen production integration is currently in progress. None of this establishes full native equivalence, resource-prefix routing, per-name overrides or dynamic save fidelity. The HSV status below remains unimplemented pending its own exact ownership/order verification; Overlay ownership must not silently be treated as proof for every HSV consumer.
+
 ## Production follow-up (2026-10-24)
 
 The production VM maps exactly six operands into `bg_h/bg_s/bg_v/st_h/st_s/st_v`, and validates exactly six arguments. The fabricated global RGB gains were removed. A native instruction-derived S/V kernel is implemented but remains isolated and is **not applied to rendered frames**; hue transfer and the standing-state renderer remain unproved. The runtime therefore preserves the two triples without claiming nonzero pixel fidelity. All-zero output is unchanged. Regression tests cover distinct signed operands, corpus tuples, wrong arity, state retention, and the intentionally no-rendering fallback.
