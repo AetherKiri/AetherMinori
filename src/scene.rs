@@ -1697,15 +1697,9 @@ impl SceneSystem {
     }
 
     fn render_panel_frame(&mut self) {
-        self.frame.rgba = compose_characters(self.canvas, &self.background_rgba, &self.characters);
-        composite_panel_state(
-            self.canvas,
-            self.panel_offset_y(),
-            &mut self.frame.rgba,
-            self.panel_transition.as_ref(),
-            self.panel.as_ref(),
-        );
-        self.frame.serial = self.frame.serial.saturating_add(1);
+        // Animation redraws must retain the same particles/layers/panel as
+        // command-driven redraws, including an active transition destination.
+        self.refresh_composed_frame();
     }
 
     fn swap_characters(&mut self) {
@@ -3187,6 +3181,24 @@ fn decode_png(data: &[u8]) -> Result<Frame, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn particle_ticks_keep_particles_and_clear_removes_them() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        scene.particles = Some(ParticleState {
+            sprite: Frame { width: 1, height: 1, rgba: vec![255; 4], serial: 0 },
+            flakes: vec![Particle { x: 0.0, y: 0.0, speed: 0.0, sway: 0.0, phase: 0.0 }],
+            horizontal_drift: 0,
+        });
+        scene.refresh_composed_frame();
+        assert_eq!(&scene.frame.rgba[..4], &[255; 4]);
+        for _ in 0..3 {
+            scene.tick_effect(16).unwrap();
+            assert_eq!(&scene.frame.rgba[..4], &[255; 4]);
+        }
+        scene.clear_effect().unwrap();
+        assert_eq!(&scene.frame.rgba[..3], &[0; 3]);
+    }
 
     /// The Supipara/Trinoline surface, which the scene tests exercise.
     const WIDTH: u32 = 1280;
