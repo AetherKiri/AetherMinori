@@ -1945,6 +1945,31 @@ fn composite_full_frame(output: &mut [u8], layer: &Frame) {
 }
 
 
+/// Native 0x5202c0 row-strip Overlay math for the observed bottom-aligned (-1) call.
+/// Alpha belongs to the destination; source alpha is not an opacity.
+#[allow(dead_code)]
+fn ef_overlay_strip(canvas: Canvas, output: &mut [u8], strip: &Frame) {
+    if strip.width == 0 || strip.height == 0 { return; }
+    for (y, row) in output.chunks_exact_mut(canvas.width as usize * 4).enumerate() {
+        // The native short-strip path extends the first source colour upward.
+        let source_y = (y as i64 + i64::from(strip.height) - i64::from(canvas.height)).max(0) as usize;
+        let start = source_y * strip.width as usize * 4;
+        let Some(source) = strip.rgba.get(start..start + 4) else { continue; };
+        for pixel in row.chunks_exact_mut(4) {
+            if pixel[3] == 0 { continue; }
+            for channel in 0..3 {
+                let s = u32::from(source[channel]);
+                let d = u32::from(pixel[channel]);
+                pixel[channel] = if d < 128 {
+                    (2 * ((s * d + 255) >> 8)).min(255) as u8
+                } else {
+                    (255 - (2 * (((255 - s) * (255 - d) + 255) >> 8)).min(255)) as u8
+                };
+            }
+        }
+    }
+}
+
 /// Exact 32-bit pixel kernel from ef 0x51f430..0x51f683, expressed in RGBA
 /// rather than native packed 0xAARRGGBB. This is not standard HSV: V enters
 /// every matrix coefficient, and signed IMUL intentionally wraps at 32 bits.
@@ -3313,6 +3338,23 @@ mod tests {
         let layer = stretch_strip(crate::profile::EF_PROFILE.canvas, &strip);
         println!("strip={}x{} first={:?} expanded_first={:?} opaque={}/{}", strip.width, strip.height, &strip.rgba[..4], &layer.rgba[..4], layer.rgba.chunks_exact(4).filter(|p| p[3] == 255).count(), layer.rgba.len()/4);
         assert_eq!(layer.rgba.len(), crate::profile::EF_PROFILE.canvas.bytes());
+    }
+
+    #[test]
+    fn native_overlay_strip_quantization_alignment_and_alpha() {
+        let strip = Frame { width: 2, height: 3, rgba: vec![
+            255,255,255,255, 0,0,0,255,
+            128,128,128,0, 0,0,0,255,
+            0,255,128,255, 255,0,0,255,
+        ], serial: 0 };
+        let mut output = vec![1,128,255,73, 20,30,40,0, 64,192,128,127, 64,192,128,255];
+        ef_overlay_strip(Canvas::new(2,2), &mut output, &strip);
+        assert_eq!(&output[..8], &[2,127,255,73, 20,30,40,0]);
+        assert_eq!(&output[8..], &[0,255,127,127, 0,255,127,255]);
+        // Full-size source processes row zero, unlike a blanket padding skip.
+        let mut pixel = vec![64,192,128,255];
+        ef_overlay_strip(Canvas::new(1,1), &mut pixel, &Frame { width:1,height:1,rgba:vec![128,128,128,0],serial:0 });
+        assert_eq!(pixel, [64,191,127,255]);
     }
 
     #[test]
