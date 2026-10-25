@@ -1,0 +1,7 @@
+# Labeled chain command support
+
+Independent command audit found `.chain next.sc#resume` passed the entire operand to VFS and failed to load it. Existing native evidence in research/ef-first-tale/CHAIN_NEXT.md lines 15–18 establishes splitting NEXT at #, loading the left script and resolving the optional label. No fresh retail execution or decompilation was needed to identify this discrepancy. Supporting record: ev_2ac6f4c205b25ff10b0d95a2852266bd663000d4cc6b464e10196d6d436d4e97 in the prior chain evidence bundle.
+
+VM now separates script and label in the deferred chain consumer, resolves the target PC before replacing the old frame, and reports the real script name through ScriptChanged. Locals and deferred scheduling remain unchanged. Empty optional suffix starts at the beginning. Missing labels fail explicitly without replacing the current frame. Missing-label error behavior is a reconstruction safety policy, not separately verified retail error handling.
+
+Tests verify exact loader path, skipping pre-label mutations, local retention, deferred scheduling, missing-label failure and unchanged existing unlabeled-chain behavior. Full suite: 97 library tests passed, 2 ignored; 1 CLI test passed; diff check passed. The extracted corpus audit found no labeled chain occurrence, so this adds native-supported syntax rather than fixing a demonstrated reached branch in the earlier playthroughs. Original host/retail visual acceptance remains incomplete.

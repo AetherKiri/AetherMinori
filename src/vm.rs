@@ -465,17 +465,26 @@ impl Vm {
         let mut events = Vec::new();
         match self.state.clone() {
             VmState::PendingChain { path } => {
+                // The original NEXT consumer separates a script and optional
+                // entry label before loading (CHAIN_NEXT.md, 0x4e36a1 onward).
+                let (script, label) = path.split_once('#')
+                    .map_or((path.as_str(), None), |(script, label)| (script, Some(label)));
                 let program =
-                    load_script(&path).map_err(|error| format!("chain {path}: {error}"))?;
+                    load_script(script).map_err(|error| format!("chain {path}: {error}"))?;
+                let mut frame = ScriptFrame::new(script.to_owned(), program);
+                if let Some(label) = label.filter(|label| !label.is_empty()) {
+                    frame.pc = frame.program.labels.get(label).copied()
+                        .ok_or_else(|| format!("chain {path}: unknown label {label}"))?;
+                }
                 // Local variables survive a chain. 107_04.sc raises favMiyako
                 // and chains on, and 108_01.sc reads it three scripts later to
                 // pick the Miyako route; clearing here silently dropped the flag
                 // and every affection branch fell to the low path.
                 // .pragma clear_local_variables is the documented way to reset.
                 self.frames.clear();
-                self.frames.push(ScriptFrame::new(path.clone(), program));
+                self.frames.push(frame);
                 self.state = VmState::Ready;
-                events.push(VmEvent::ScriptChanged(path));
+                events.push(VmEvent::ScriptChanged(script.to_owned()));
             }
             VmState::WaitingTimer { remaining_ms } if delta_ms < remaining_ms => {
                 self.state = VmState::WaitingTimer {
@@ -2260,6 +2269,36 @@ mod tests {
             &second[0],
             VmEvent::Message(MessageRequest { read: true, .. })
         ));
+    }
+
+    #[test]
+    fn labeled_chain_loads_script_and_skips_commands_before_entry() {
+        let mut vm = Vm::new("first.sc", program(".set flag = 1\n.chain next.sc#resume"));
+        vm.tick(0, no_scripts).unwrap();
+        vm.tick(0, no_scripts).unwrap();
+        assert_eq!(vm.current_script(), Some("first.sc"));
+        assert_eq!(vm.local("flag"), Some(1));
+        let events = vm.tick(0, |name| {
+            assert_eq!(name, "next.sc");
+            Ok(program(".set flag = 99\n.label resume\n.message 10 * * resumed"))
+        }).unwrap();
+        assert_eq!(events, vec![VmEvent::ScriptChanged("next.sc".into())]);
+        assert_eq!(vm.local("flag"), Some(1));
+        vm.tick(0, no_scripts).unwrap();
+        assert_eq!(vm.state(), &VmState::WaitingInput);
+    }
+
+    #[test]
+    fn missing_chain_label_does_not_replace_current_script() {
+        let mut vm = Vm::new("first.sc", program(".chain next.sc#missing"));
+        vm.tick(0, no_scripts).unwrap();
+        let error = vm.tick(0, |name| {
+            assert_eq!(name, "next.sc");
+            Ok(program(".end"))
+        }).unwrap_err();
+        assert!(error.contains("unknown label missing"));
+        assert_eq!(vm.current_script(), Some("first.sc"));
+        assert!(matches!(vm.state(), VmState::PendingChain { .. }));
     }
 
     #[test]
