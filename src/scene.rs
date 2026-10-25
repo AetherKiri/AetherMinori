@@ -1575,20 +1575,7 @@ impl SceneSystem {
     }
 
     fn refresh_character_frame(&mut self) {
-        let mut composed = compose_characters(self.canvas, &self.background_rgba, &self.characters);
-        composite_panel_state(
-            self.canvas,
-            self.panel_offset_y(),
-            &mut composed,
-            self.panel_transition.as_ref(),
-            self.panel.as_ref(),
-        );
-        if let Some(transition) = self.transition.as_mut() {
-            transition.new_rgba = composed;
-        } else {
-            self.frame.rgba = composed;
-            self.frame.serial = self.frame.serial.saturating_add(1);
-        }
+        self.refresh_composed_frame();
     }
 
     pub fn apply_stage(
@@ -3270,6 +3257,20 @@ mod tests {
         assert!(scene.characters.is_empty());
         scene.refresh_composed_frame();
         assert!(scene.frame.rgba == frozen, "frozen character pixels disappeared after redraw");
+    }
+
+    #[test]
+    fn character_redraw_keeps_particles_and_frame_layers() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        scene.particles = Some(ParticleState {
+            sprite: Frame { width: 1, height: 1, rgba: vec![255; 4], serial: 0 },
+            flakes: vec![Particle { x: 1.0, y: 0.0, speed: 0.0, sway: 0.0, phase: 0.0 }], horizontal_drift: 0,
+        });
+        scene.frame_stills.push(Frame { width: 1, height: 1, rgba: vec![17, 29, 43, 255], serial: 0 });
+        scene.refresh_composed_frame();
+        scene.refresh_character_frame();
+        assert_eq!(&scene.frame.rgba[..4], &[17, 29, 43, 255]);
+        assert_eq!(&scene.frame.rgba[4..8], &[255; 4]);
     }
 
     #[test]
