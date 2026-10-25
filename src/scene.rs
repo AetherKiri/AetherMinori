@@ -1933,6 +1933,17 @@ fn advance_particles(canvas: Canvas, state: &mut ParticleState, delta_ms: u32) {
     }
 }
 
+/// Native 0x522ae0 comparison is unsigned *packed* AARRGGBB, not channel max
+/// or source-over. Kept isolated until effect surface ownership is integrated.
+#[allow(dead_code)]
+fn ef_snow_max_pixel(destination: [u8;4], mut source: [u8;4], alpha: i32) -> [u8;4] {
+    if alpha < 1 { return destination; }
+    if alpha < 255 { source[3] = (u32::from(source[3]) * alpha as u32 / 255) as u8; }
+    if source[3] == 0 { return destination; }
+    let packed = |p: [u8;4]| u32::from_be_bytes([p[3],p[0],p[1],p[2]]);
+    if packed(source) > packed(destination) { source } else { destination }
+}
+
 fn composite_particles(canvas: Canvas, output: &mut [u8], state: &ParticleState) {
     let sprite = &state.sprite;
     for particle in &state.flakes {
@@ -4356,6 +4367,20 @@ mod tests {
         let target = &scene.transition.as_ref().unwrap().new_rgba;
         let bottom_left = ((HEIGHT - 1) * WIDTH * 4) as usize;
         assert_eq!(&target[bottom_left..bottom_left + 4], &[255; 4]);
+    }
+
+    #[test]
+    fn native_snow_packed_max_preserves_rgb_and_scales_only_source_alpha() {
+        let source = [50,90,130,200];
+        for alpha in 1..255 {
+            let expected = (200 * alpha / 255) as u8;
+            let result = ef_snow_max_pixel([0,0,0,0],source,alpha);
+            assert_eq!(result,if expected == 0 { [0;4] } else { [50,90,130,expected] });
+        }
+        assert_eq!(ef_snow_max_pixel([10,20,30,255],source,256),[10,20,30,255]);
+        assert_eq!(ef_snow_max_pixel([255,255,255,1],[1,2,3,2],255),[1,2,3,2]);
+        assert_eq!(ef_snow_max_pixel([10,250,250,128],[11,0,0,128],255),[11,0,0,128]);
+        assert_eq!(ef_snow_max_pixel([10,20,30,40],source,-1),[10,20,30,40]);
     }
 
     #[test]
