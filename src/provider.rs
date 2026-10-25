@@ -5,6 +5,17 @@ use std::io::Cursor;
 use std::mem::size_of;
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_RUNTIME_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_runtime_id() -> u64 {
+    NEXT_RUNTIME_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn runtime_cache_file(cache: &Path, runtime_id: u64, suffix: &str) -> PathBuf {
+    cache.join(format!("minori-{}-{runtime_id}-{suffix}", std::process::id()))
+}
 
 use lewton::inside_ogg::OggStreamReader;
 
@@ -177,6 +188,7 @@ struct Runtime {
     audio_paths: [Option<PathBuf>; 5],
     writable_path: PathBuf,
     cache_path: PathBuf,
+    runtime_id: u64,
     host_user_data: *mut c_void,
     platform_request: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char)>,
     persistence_pending: bool,
@@ -496,7 +508,7 @@ impl Runtime {
                 .as_ref()
                 .ok_or("message icon requires a mounted VFS")?
                 .read(icon.resource)?;
-            let path = self.cache_path.join("minori-message-icon.png");
+            let path = runtime_cache_file(&self.cache_path, self.runtime_id, "message-icon.png");
             fs::create_dir_all(&self.cache_path)
                 .map_err(|error| format!("create message cache: {error}"))?;
             fs::write(&path, data).map_err(|error| format!("write message icon: {error}"))?;
@@ -688,11 +700,9 @@ impl Runtime {
         let path = if let Some(data) = request.data {
             fs::create_dir_all(&self.cache_path)
                 .map_err(|error| format!("create audio cache: {error}"))?;
-            let path = self.cache_path.join(format!(
-                "minori-audio-{}-{}.ogg",
-                std::process::id(),
-                request.slot
-            ));
+            let path = runtime_cache_file(
+                &self.cache_path, self.runtime_id, &format!("audio-{}.ogg", request.slot),
+            );
             fs::write(&path, data).map_err(|error| format!("write audio cache: {error}"))?;
             self.audio_paths[request.slot] = Some(path.clone());
             path.to_string_lossy().into_owned()
@@ -776,11 +786,9 @@ impl Runtime {
         } else {
             "avi"
         };
-        let path = self.cache_path.join(format!(
-            "minori-movie-{}-{}.{extension}",
-            std::process::id(),
-            request.id
-        ));
+        let path = runtime_cache_file(
+            &self.cache_path, self.runtime_id, &format!("movie-{}.{extension}", request.id),
+        );
         fs::write(&path, &data).map_err(|error| format!("write movie cache: {error}"))?;
         let argument = safe_cstring(&format!(
             "{}\t{}\t{}\t{}\t{}\t{}",
@@ -990,6 +998,7 @@ unsafe extern "C" fn create(
         audio_paths: [None, None, None, None, None],
         writable_path,
         cache_path,
+        runtime_id: next_runtime_id(),
         host_user_data: unsafe { (*host).user_data },
         platform_request: unsafe { (*host).platform_request },
         persistence_pending: false,
@@ -2160,6 +2169,7 @@ mod tests {
             audio_paths: [None, None, None, None, None],
             writable_path: std::env::temp_dir(),
             cache_path: std::env::temp_dir(),
+            runtime_id: super::next_runtime_id(),
             host_user_data: std::ptr::null_mut(),
             platform_request: None,
             persistence_pending: false,
@@ -2202,6 +2212,23 @@ mod tests {
             unsafe { super::resume(std::ptr::null_mut()) },
             super::INVALID_ARGUMENT
         );
+    }
+
+    #[test]
+    fn shared_cache_media_paths_are_distinct_for_each_runtime() {
+        let cache = tempfile::tempdir().unwrap();
+        let first = super::next_runtime_id();
+        let second = super::next_runtime_id();
+        assert_ne!(first, second);
+        for suffix in ["audio-0.ogg", "audio-1.ogg", "movie-1.avi", "message-icon.png"] {
+            let a = super::runtime_cache_file(cache.path(), first, suffix);
+            let b = super::runtime_cache_file(cache.path(), second, suffix);
+            assert_ne!(a, b);
+            std::fs::write(&a, b"first").unwrap();
+            std::fs::write(&b, b"second").unwrap();
+            std::fs::remove_file(&a).unwrap();
+            assert_eq!(std::fs::read(&b).unwrap(), b"second");
+        }
     }
 
     #[test]
