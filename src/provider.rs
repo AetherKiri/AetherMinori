@@ -484,6 +484,26 @@ impl Runtime {
         Ok(())
     }
 
+    fn flush_globals_on_destroy(&mut self) {
+        // Audited native runtime/store destructors (0x4db76f / 0x4c8f2c)
+        // serialize dirty globals via 0x4c7f70. setGlobal itself only marks
+        // them dirty; End is not an immediate flush boundary.
+        // Do not create unrelated saves for an unopened runtime or an empty
+        // writable path, nor rewrite an unchanged snapshot. save_globals creates
+        // a missing writable directory and reports invalid paths as errors.
+        if self.writable_path.as_os_str().is_empty() {
+            return;
+        }
+        let Some(vm) = self.vm.as_ref() else {
+            return;
+        };
+        if vm.globals_snapshot() != self.persisted_globals {
+            // The destroy ABI returns void. Persistence failure must not prevent
+            // media cleanup or dropping the runtime.
+            let _ = self.save_globals();
+        }
+    }
+
     fn fail(&mut self, message: impl AsRef<str>, result: i32) -> i32 {
         self.failed = true;
         self.report_error(message, result)
@@ -1043,6 +1063,7 @@ unsafe extern "C" fn destroy(opaque: *mut c_void) {
     if !opaque.is_null() {
         unsafe {
             let mut runtime = Box::from_raw(opaque as *mut Runtime);
+            runtime.flush_globals_on_destroy();
             runtime.clear_movie();
             runtime.clear_audio();
             drop(runtime);
@@ -2211,6 +2232,92 @@ mod tests {
             paused: false,
             delivered_serial: 0,
         }
+    }
+
+    fn terminal_unlock_runtime(writable: &std::path::Path) -> super::Runtime {
+        let mut runtime = empty_runtime();
+        runtime.writable_path = writable.to_path_buf();
+        let program = crate::script::Program::parse(".setGlobal BADEND1 = 1\n.end").unwrap();
+        let mut vm = crate::vm::Vm::new("badend.sc", program);
+        let mut events = Vec::new();
+        for _ in 0..3 {
+            events.extend(vm.tick(0, |_| Err("unexpected script load".into())).unwrap());
+        }
+        assert_eq!(vm.state(), &crate::vm::VmState::Finished);
+        assert_eq!(vm.global("BADEND1"), Some(1));
+        assert!(!events.iter().any(|event| matches!(event, crate::vm::VmEvent::PersistGlobals)));
+        runtime.vm = Some(vm);
+        runtime
+    }
+
+    #[test]
+    fn destroy_persists_terminal_unlock_and_new_vm_loads_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let writable = directory.path().join("new-writable");
+        let runtime = terminal_unlock_runtime(&writable);
+        assert!(!runtime.persistence_pending);
+        let system_dat = writable.join("system.dat");
+        assert!(!system_dat.exists(), "End must not flush immediately");
+        unsafe { super::destroy(Box::into_raw(Box::new(runtime)).cast()) };
+        let globals = crate::persistence::load_system_dat(&system_dat).unwrap();
+        assert_eq!(globals.get("BADEND1"), Some(&1));
+        let mut reopened = empty_runtime();
+        reopened.writable_path = writable;
+        reopened.persisted_globals = globals;
+        let mut vm = crate::vm::Vm::new("reopened.sc", crate::script::Program::parse(".end").unwrap());
+        vm.replace_globals(reopened.persisted_globals.clone());
+        reopened.vm = Some(vm);
+        assert_eq!(reopened.vm.as_ref().unwrap().global("BADEND1"), Some(1));
+    }
+
+    #[test]
+    fn destroy_without_vm_or_changed_globals_does_not_write() {
+        let directory = tempfile::tempdir().unwrap();
+        let system_dat = directory.path().join("system.dat");
+        let original = b"existing unrelated save";
+        std::fs::write(&system_dat, original).unwrap();
+        let mut unopened = empty_runtime();
+        unopened.writable_path = directory.path().to_path_buf();
+        unsafe { super::destroy(Box::into_raw(Box::new(unopened)).cast()) };
+        assert_eq!(std::fs::read(&system_dat).unwrap(), original);
+        let mut unchanged = terminal_unlock_runtime(directory.path());
+        unchanged.persisted_globals = unchanged.vm.as_ref().unwrap().globals_snapshot();
+        unsafe { super::destroy(Box::into_raw(Box::new(unchanged)).cast()) };
+        assert_eq!(std::fs::read(&system_dat).unwrap(), original);
+        unsafe { super::destroy(std::ptr::null_mut()) };
+    }
+
+    #[test]
+    fn destroy_ignores_persistence_failure_and_still_cleans_media() {
+        let directory = tempfile::tempdir().unwrap();
+        // A directory at the output filename forces a write failure even as root.
+        std::fs::create_dir(directory.path().join("system.dat")).unwrap();
+        let mut runtime = terminal_unlock_runtime(directory.path());
+        let movie = directory.path().join("movie-cache");
+        let audio = directory.path().join("audio-cache");
+        std::fs::write(&movie, b"movie").unwrap();
+        std::fs::write(&audio, b"audio").unwrap();
+        runtime.movie_path = Some(movie.clone());
+        runtime.audio_paths[0] = Some(audio.clone());
+        unsafe { super::destroy(Box::into_raw(Box::new(runtime)).cast()) };
+        assert!(!movie.exists());
+        assert!(!audio.exists());
+        assert!(directory.path().join("system.dat").is_dir());
+    }
+
+    #[test]
+    #[ignore = "requires MINORI_EF_ROOT pointing to a local ef installation"]
+    fn live_destroy_terminal_unlock_reopens_in_same_writable_directory() {
+        let root = std::ffi::CString::new(std::env::var("MINORI_EF_ROOT").expect("set MINORI_EF_ROOT")).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let runtime = terminal_unlock_runtime(directory.path());
+        unsafe { super::destroy(Box::into_raw(Box::new(runtime)).cast()) };
+        let mut reopened = empty_runtime();
+        reopened.writable_path = directory.path().to_path_buf();
+        reopened.cache_path = directory.path().to_path_buf();
+        let handle = std::ptr::addr_of_mut!(reopened).cast();
+        assert_eq!(unsafe { super::open_game(handle, root.as_ptr(), std::ptr::null()) }, super::OK);
+        assert_eq!(reopened.vm.as_ref().unwrap().global("BADEND1"), Some(1));
     }
 
     #[test]
