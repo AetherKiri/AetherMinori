@@ -202,7 +202,7 @@ pub(crate) fn save_manual_slot(path: &Path, save: &ManualSaveData) -> Result<(),
     let compressed = compress_to_vec_zlib(&payload, 6);
     let mut output = Vec::with_capacity(16 + compressed.len());
     output.extend_from_slice(MANUAL_SAVE_MAGIC);
-    output.extend_from_slice(&5_u32.to_le_bytes());
+    output.extend_from_slice(&6_u32.to_le_bytes());
     output.extend_from_slice(
         &u32::try_from(payload.len())
             .map_err(|_| "manual save is too large")?
@@ -222,7 +222,7 @@ pub(crate) fn decode_manual_save(data: &[u8]) -> Result<ManualSaveData, String> 
         return Err("manual save header is invalid".into());
     }
     let version = u32::from_le_bytes(data[8..12].try_into().unwrap());
-    if !matches!(version, 1..=5) {
+    if !matches!(version, 1..=6) {
         return Err("manual save version is unsupported".into());
     }
     let expected = u32::from_le_bytes(data[12..16].try_into().unwrap()) as usize;
@@ -301,9 +301,17 @@ pub(crate) fn decode_manual_save(data: &[u8]) -> Result<ManualSaveData, String> 
         if offset + len > payload.len() {
             return Err("manual scene is truncated".into());
         }
-        let scene = if version >= 5 {
+        let scene = if version >= 6 {
             bincode::deserialize(&payload[offset..offset + len])
                 .map_err(|error| format!("decode manual scene: {error}"))?
+        } else if version == 5 {
+            // v5 has exactly seven fields; bincode cannot default an absent tail.
+            let (background_rgba, panel, characters, rand_state,
+                screen_layers, overlay_layers, frame_stills) =
+                bincode::deserialize(&payload[offset..offset + len])
+                    .map_err(|error| format!("decode v5 manual scene: {error}"))?;
+            ManualSceneState { background_rgba, panel, characters, rand_state,
+                screen_layers, overlay_layers, frame_stills, camera: None }
         } else {
             // v4 bincode has a fixed four-field layout; serde defaults do not
             // make absent sequence fields backward compatible.
@@ -311,7 +319,7 @@ pub(crate) fn decode_manual_save(data: &[u8]) -> Result<ManualSaveData, String> 
                 bincode::deserialize(&payload[offset..offset + len])
                     .map_err(|error| format!("decode legacy manual scene: {error}"))?;
             ManualSceneState { background_rgba, panel, characters, rand_state,
-                screen_layers: Vec::new(), overlay_layers: Vec::new(), frame_stills: Vec::new() }
+                screen_layers: Vec::new(), overlay_layers: Vec::new(), frame_stills: Vec::new(), camera: None }
         };
         offset += len;
         Some(scene)
@@ -442,7 +450,16 @@ mod tests {
 
     #[test]
     fn version_four_scene_migrates_from_original_binary_layout() {
-        // Build the old envelope independently of the current v5 writer.
+        assert_legacy_scene_migration(4);
+    }
+
+    #[test]
+    fn version_five_scene_migrates_from_original_binary_layout() {
+        assert_legacy_scene_migration(5);
+    }
+
+    fn assert_legacy_scene_migration(version: u32) {
+        // Build the old envelope independently of the current v6 writer.
         let mut payload = Vec::new();
         push_string(&mut payload, "legacy").unwrap();
         push_string(&mut payload, "100_01.sc").unwrap();
@@ -453,14 +470,21 @@ mod tests {
         payload.extend_from_slice(&0_u32.to_le_bytes()); // seen messages
         payload.extend_from_slice(&[0, 0, 1]); // no message/BGM, scene present
         let legacy_scene = (vec![9_u8; 4], Option::<crate::scene::Frame>::None, Vec::<crate::scene::ManualCharacterState>::new(), 71_u32);
-        let scene = bincode::serialize(&legacy_scene).unwrap();
+        let layer = crate::scene::Frame { width: 1, height: 1, rgba: vec![17, 29, 43, 255], serial: 3 };
+        let scene = if version == 4 {
+            bincode::serialize(&legacy_scene).unwrap()
+        } else {
+            // Original v5 field order, independent of ManualSceneState's v6 layout.
+            bincode::serialize(&(legacy_scene.0, legacy_scene.1, legacy_scene.2,
+                legacy_scene.3, vec![layer.clone()], vec![layer.clone()], vec![layer.clone()])).unwrap()
+        };
         payload.extend_from_slice(&(scene.len() as u32).to_le_bytes());
         payload.extend_from_slice(&scene);
         payload.extend_from_slice(&1_u32.to_le_bytes());
         payload.extend_from_slice(&1_u32.to_le_bytes());
         payload.extend_from_slice(&[1, 2, 3, 255]);
         let mut encoded = MANUAL_SAVE_MAGIC.to_vec();
-        encoded.extend_from_slice(&4_u32.to_le_bytes());
+        encoded.extend_from_slice(&version.to_le_bytes());
         encoded.extend_from_slice(&(payload.len() as u32).to_le_bytes());
         encoded.extend_from_slice(&compress_to_vec_zlib(&payload, 6));
         let directory = tempfile::tempdir().unwrap();
@@ -474,10 +498,14 @@ mod tests {
         let state = save.scene.as_ref().unwrap();
         assert_eq!(state.background_rgba, vec![9; 4]);
         assert_eq!(state.rand_state, 71);
-        assert!(state.screen_layers.is_empty() && state.overlay_layers.is_empty() && state.frame_stills.is_empty());
+        assert!(state.camera.is_none());
+        let expected_layers = if version == 4 { Vec::new() } else { vec![layer] };
+        assert_eq!(state.screen_layers, expected_layers);
+        assert_eq!(state.overlay_layers, expected_layers);
+        assert_eq!(state.frame_stills, expected_layers);
         let upgraded = directory.path().join("upgraded.sav");
         save_manual_slot(&upgraded, &save).unwrap();
-        assert_eq!(&fs::read(&upgraded).unwrap()[8..12], &5_u32.to_le_bytes());
+        assert_eq!(&fs::read(&upgraded).unwrap()[8..12], &6_u32.to_le_bytes());
         assert_eq!(load_manual_slot(&upgraded).unwrap().unwrap(), save);
     }
 
@@ -508,6 +536,13 @@ mod tests {
                 screen_layers: vec![crate::scene::Frame { width: 1, height: 1, rgba: vec![1, 2, 3, 255], serial: 0 }],
                 overlay_layers: Vec::new(),
                 frame_stills: Vec::new(),
+                camera: Some(crate::scene::ManualCameraState {
+                    source: crate::scene::Frame { width: 2, height: 3, rgba: vec![19; 24], serial: 4 },
+                    x: 1,
+                    y: 2,
+                    foreground: vec![(crate::scene::Frame { width: 1, height: 1,
+                        rgba: vec![17, 29, 43, 255], serial: 0 }, 3, 4)],
+                }),
             }),
             globals: HashMap::from([("FLAG".into(), 3)]),
             locals: HashMap::from([("LOCAL".into(), -2)]),

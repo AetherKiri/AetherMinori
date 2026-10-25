@@ -166,12 +166,19 @@ pub(crate) struct ManualSceneState {
     pub panel: Option<Frame>,
     pub characters: Vec<ManualCharacterState>,
     pub rand_state: u32,
-    #[serde(default)]
     pub screen_layers: Vec<Frame>,
-    #[serde(default)]
     pub overlay_layers: Vec<Frame>,
-    #[serde(default)]
     pub frame_stills: Vec<Frame>,
+    pub camera: Option<ManualCameraState>,
+}
+
+/// Static inputs for subsequent camera recrops, not running effect/scroll state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ManualCameraState {
+    pub source: Frame,
+    pub x: i32,
+    pub y: i32,
+    pub foreground: Vec<(Frame, i32, i32)>,
 }
 
 #[derive(Debug, Clone)]
@@ -436,6 +443,13 @@ impl SceneSystem {
             screen_layers: self.screen_layers.clone(),
             overlay_layers: self.overlay_layers.clone(),
             frame_stills: self.frame_stills.clone(),
+            camera: Some(ManualCameraState {
+                source: self.background_source.clone(),
+                x: self.camera_x,
+                y: self.camera_y,
+                foreground: self.effect_layers.as_ref()
+                    .map_or_else(Vec::new, |layers| layers.foreground.clone()),
+            }),
         }
     }
 
@@ -565,13 +579,7 @@ impl SceneSystem {
             return Err("manual save background has invalid dimensions".into());
         }
         self.restore_save_capture(frame)?;
-        self.background_rgba = state.background_rgba;
-        self.background_source = Frame {
-            width: self.canvas.width,
-            height: self.canvas.height,
-            rgba: self.background_rgba.clone(),
-            serial: self.frame.serial,
-        };
+        self.restore_manual_background(state.background_rgba, state.camera)?;
         self.panel = state.panel;
         self.rand_state = state.rand_state;
         self.screen_layers = state.screen_layers;
@@ -638,6 +646,43 @@ impl SceneSystem {
                 },
             );
         }
+        Ok(())
+    }
+
+    fn restore_manual_background(
+        &mut self,
+        background_rgba: Vec<u8>,
+        camera: Option<ManualCameraState>,
+    ) -> Result<(), String> {
+        if let Some(camera) = camera {
+            let valid = |frame: &Frame| {
+                (frame.width as usize).checked_mul(frame.height as usize)
+                    .and_then(|pixels| pixels.checked_mul(4)) == Some(frame.rgba.len())
+            };
+            if !valid(&camera.source) || camera.foreground.iter().any(|(frame, _, _)| !valid(frame)) {
+                return Err("manual save camera source has invalid dimensions".into());
+            }
+            self.background_source = camera.source;
+            self.camera_x = camera.x;
+            self.camera_y = camera.y;
+            self.effect_layers = (!camera.foreground.is_empty()).then(|| StageEffectLayers {
+                base: self.background_source.clone(),
+                scrolling: Vec::new(),
+                foreground: camera.foreground,
+            });
+        } else {
+            // v4/v5 only retained the cropped viewport; keep their old fallback.
+            self.background_source = Frame {
+                width: self.canvas.width,
+                height: self.canvas.height,
+                rgba: background_rgba.clone(),
+                serial: self.frame.serial,
+            };
+            self.camera_x = 0;
+            self.camera_y = 0;
+            self.effect_layers = None;
+        }
+        self.background_rgba = background_rgba;
         Ok(())
     }
 
@@ -3373,6 +3418,54 @@ mod tests {
         assert_eq!(scene.frame.rgba, pixels);
         let state = scene.manual_state();
         assert_eq!(state.frame_stills.len(), 1);
+    }
+
+    #[test]
+    fn manual_camera_restore_preserves_subsequent_scroll() {
+        // Synthetic decoded state exercises the production background restore path;
+        // no proprietary artwork or character-loading VFS is needed.
+        for with_foreground in [false, true] {
+            let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+            scene.canvas = Canvas::new(2, 2);
+            scene.frame = black_frame(scene.canvas);
+            scene.background_source = Frame {
+                width: 4, height: 8,
+                rgba: (0..32).flat_map(|i| [i as u8, 50, 90, 255]).collect(),
+                serial: 7,
+            };
+            scene.camera_x = 1;
+            scene.camera_y = 2;
+            if with_foreground {
+                scene.effect_layers = Some(StageEffectLayers {
+                    base: scene.background_source.clone(), scrolling: Vec::new(),
+                    foreground: vec![(Frame { width: 1, height: 1,
+                        rgba: vec![201, 202, 203, 255], serial: 0 }, 1, 0)],
+                });
+            }
+            scene.recrop_stage_background().unwrap();
+            scene.render_panel_frame();
+            let capture = scene.save_capture();
+            let state: ManualSceneState = bincode::deserialize(
+                &bincode::serialize(&scene.manual_state()).unwrap()).unwrap();
+            let mut restored = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+            restored.canvas = scene.canvas;
+            restored.restore_save_capture(capture).unwrap();
+            restored.restore_manual_background(state.background_rgba, state.camera).unwrap();
+            assert_eq!(restored.background_source, scene.background_source);
+            assert_eq!((restored.camera_x, restored.camera_y), (1, 2));
+            for target_y in [5, 1] {
+                let request = crate::vm::ScrollRequest { target_x: None, target_y: Some(target_y), speed: 100 };
+                scene.start_scroll(&request);
+                restored.start_scroll(&request);
+                for delta in [10, 10, 100] {
+                    assert_eq!(scene.tick_scroll(delta).unwrap(), restored.tick_scroll(delta).unwrap());
+                    assert_eq!((restored.camera_x, restored.camera_y), (scene.camera_x, scene.camera_y));
+                    assert_eq!(restored.background_rgba, scene.background_rgba);
+                    assert_eq!(restored.frame.rgba, scene.frame.rgba);
+                }
+            }
+            assert!(restored.wscroll.is_none() && restored.particles.is_none());
+        }
     }
 
     #[test]
