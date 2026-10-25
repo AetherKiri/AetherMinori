@@ -469,8 +469,13 @@ impl Runtime {
     }
 
     fn fail(&mut self, message: impl AsRef<str>, result: i32) -> i32 {
-        self.error = safe_cstring(message.as_ref());
         self.failed = true;
+        self.report_error(message, result)
+    }
+
+    // A rejected manual save must not permanently stop a healthy story VM.
+    fn report_error(&mut self, message: impl AsRef<str>, result: i32) -> i32 {
+        self.error = safe_cstring(message.as_ref());
         result
     }
 
@@ -2093,7 +2098,7 @@ unsafe extern "C" fn submit_platform_response(
                 }
                 OK
             }
-            Err(error) => runtime.fail(error, IO_ERROR),
+            Err(error) => runtime.report_error(error, IO_ERROR),
         };
     }
     if operation == "minori_select" {
@@ -2145,9 +2150,8 @@ unsafe extern "C" fn last_error(opaque: *mut c_void) -> *const c_char {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn provider_pause_resume_and_tick_state_are_consistent() {
-        let mut runtime = super::Runtime {
+    fn empty_runtime() -> super::Runtime {
+        super::Runtime {
             profile: None,
             vfs: None,
             vm: None,
@@ -2182,7 +2186,33 @@ mod tests {
             failed: false,
             paused: false,
             delivered_serial: 0,
-        };
+        }
+    }
+
+    #[test]
+    fn rejected_manual_save_does_not_poison_runtime() {
+        let mut runtime = empty_runtime();
+        let source = crate::script::Program::parse(".select Stay:stay Walk:walk\n.label stay\n.end\n.label walk\n.end").unwrap();
+        let mut vm = crate::vm::Vm::new("choice.sc", source);
+        vm.tick(0, |_| Err("unexpected script load".into())).unwrap();
+        runtime.vm = Some(vm);
+        runtime.scene = Some(crate::scene::SceneSystem::script_only(&crate::profile::EF_PROFILE));
+        runtime.pending_save_slot = Some(0);
+        let handle = std::ptr::addr_of_mut!(runtime).cast();
+        assert_eq!(unsafe { super::submit_platform_response(handle, c"text_input".as_ptr(), c"result=ok\tchoice save".as_ptr()) }, super::IO_ERROR);
+        assert!(!runtime.failed);
+        assert!(runtime.error.to_string_lossy().contains("stable message input boundary"));
+        assert!(runtime.pending_save_slot.is_none());
+        assert_eq!(unsafe { super::submit_platform_response(handle, c"minori_select".as_ptr(), c"index=1".as_ptr()) }, super::OK);
+        assert_eq!(runtime.vm.as_ref().unwrap().state(), &crate::vm::VmState::Ready);
+        runtime.failed = true;
+        runtime.report_error("save rejected", super::IO_ERROR);
+        assert!(runtime.failed, "recoverable errors must not clear prior fatal failure");
+    }
+
+    #[test]
+    fn provider_pause_resume_and_tick_state_are_consistent() {
+        let mut runtime = empty_runtime();
         let handle = std::ptr::addr_of_mut!(runtime).cast::<std::ffi::c_void>();
 
         assert_eq!(unsafe { super::pause(handle) }, super::OK);
