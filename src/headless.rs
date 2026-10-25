@@ -76,6 +76,15 @@ fn host_struct() -> EngineRuntimeHost {
 impl Headless {
     /// Create a runtime and open a game installation at `root`.
     pub fn open(root: &Path, writable: &Path) -> Result<Self, String> {
+        Self::open_with_options(root, writable, &[])
+    }
+
+    /// Set startup options before loading any script or emitting game requests.
+    pub fn open_with_options(
+        root: &Path,
+        writable: &Path,
+        options: &[(&str, &str)],
+    ) -> Result<Self, String> {
         let provider = descriptor();
         let create = provider.create.ok_or("provider has no create")?;
         let open_game = provider.open_game.ok_or("provider has no open_game")?;
@@ -102,6 +111,10 @@ impl Headless {
             opaque,
             root: root.to_string_lossy().into_owned(),
         };
+
+        for &(key, value) in options {
+            harness.set_option(key, value)?;
+        }
 
         let root_c = CString::new(root.to_string_lossy().as_bytes())
             .map_err(|_| "game root contains a NUL".to_string())?;
@@ -278,6 +291,23 @@ impl Headless {
         unsafe { CStr::from_ptr(value) }
             .to_string_lossy()
             .into_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_options_are_validated_before_game_open() {
+        let result = Headless::open_with_options(
+            Path::new("missing-game-root"),
+            &std::env::temp_dir(),
+            &[("minori.language", "invalid-language")],
+        );
+        let error = result.err().expect("invalid language must fail");
+        assert!(error.contains("set_option(minori.language)"), "{error}");
+        assert!(error.contains("unknown script language"), "{error}");
     }
 }
 

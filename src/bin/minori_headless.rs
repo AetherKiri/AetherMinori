@@ -61,15 +61,11 @@ fn main() -> Result<(), String> {
     let writable = output.join("saves");
     std::fs::create_dir_all(&writable).map_err(|e| format!("create {}: {e}", writable.display()))?;
 
-    let mut runtime = Headless::open(&root, &writable)?;
-    runtime.set_option("minori.language", &language)?;
+    let mut options = vec![("minori.language", language.as_str())];
     if let Some(script) = &start {
-        runtime.set_option("minori.start", script)?;
+        options.push(("minori.start", script.as_str()));
     }
-    // `Headless::open` starts the default script immediately. Apply language and
-    // optional entry-script settings before restarting so the first script uses
-    // the requested variant, not only its later chained scripts.
-    runtime.restart()?;
+    let mut runtime = Headless::open_with_options(&root, &writable, &options)?;
 
     // The runtime emits minori_message platform requests; the host turns them
     // into labels. The headless backend has no host, so it rasterises the same
