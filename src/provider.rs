@@ -2079,15 +2079,19 @@ unsafe extern "C" fn submit_platform_response(
     let operation = unsafe { CStr::from_ptr(operation) }.to_string_lossy();
     let argument = unsafe { CStr::from_ptr(argument) }.to_string_lossy();
     if operation == "text_input" {
-        let Some(slot) = runtime.pending_save_slot.take() else {
-            return runtime.fail("unexpected text_input response", INVALID_STATE);
+        let Some(slot) = runtime.pending_save_slot else {
+            return runtime.report_error("unexpected text_input response", INVALID_STATE);
         };
         if argument == "result=cancel" {
+            runtime.pending_save_slot = None;
+            runtime.error = safe_cstring("");
             return OK;
         }
         let Some(name) = argument.strip_prefix("result=ok\t") else {
-            return runtime.fail("invalid text_input response", INVALID_ARGUMENT);
+            // Keep the pending dialog until a valid terminal response arrives.
+            return runtime.report_error("invalid text_input response", INVALID_ARGUMENT);
         };
+        runtime.pending_save_slot = None;
         return match runtime.save_manual_game(slot, name) {
             Ok(()) => {
                 if let Some(scene) = runtime.scene.as_mut() {
@@ -2190,6 +2194,21 @@ mod tests {
             paused: false,
             delivered_serial: 0,
         }
+    }
+
+    #[test]
+    fn malformed_save_dialog_response_preserves_pending_slot_for_retry() {
+        let mut runtime = empty_runtime();
+        runtime.pending_save_slot = Some(4);
+        let handle = std::ptr::addr_of_mut!(runtime).cast();
+        assert_eq!(unsafe { super::submit_platform_response(handle, c"text_input".as_ptr(), c"garbled".as_ptr()) }, super::INVALID_ARGUMENT);
+        assert_eq!(runtime.pending_save_slot, Some(4));
+        assert!(!runtime.failed);
+        assert_eq!(unsafe { super::submit_platform_response(handle, c"text_input".as_ptr(), c"result=cancel".as_ptr()) }, super::OK);
+        assert!(runtime.pending_save_slot.is_none());
+        assert!(runtime.error.to_bytes().is_empty());
+        assert_eq!(unsafe { super::submit_platform_response(handle, c"text_input".as_ptr(), c"result=cancel".as_ptr()) }, super::INVALID_STATE);
+        assert!(!runtime.failed);
     }
 
     #[test]
