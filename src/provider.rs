@@ -1572,7 +1572,7 @@ unsafe extern "C" fn tick(opaque: *mut c_void, delta_ms: u32) -> i32 {
                                     .scene
                                     .as_mut()
                                     .ok_or_else(|| "scene system is not initialized".to_string())?
-                                    .apply_screen(vfs, &request.images)
+                                    .apply_screen(vfs, request.screen_slots.as_ref().ok_or_else(|| "screen slot mapping missing".to_string())?)
                             });
                         if let Err(error) = result {
                             return runtime.fail(error, INVALID_STATE);

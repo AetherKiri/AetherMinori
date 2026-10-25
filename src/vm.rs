@@ -181,16 +181,17 @@ pub struct StageRequest {
 
 /// A .screen or .overlay layer set.
 ///
-/// Screen keeps its historical strip composition. Overlay preserves three native
-/// resource slots: bank1 (scope unresolved), background, and standing art. The
-/// latter two filter individual asset RGB before placement, not screen coverage.
+/// Both commands preserve three native resource slots: base-spec foreground,
+/// background, and standing art. Filtering is asset-local before placement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayerRequest {
     /// One resource name per screen depth. An empty list clears the layer.
     pub images: Vec<String>,
     /// Verified overlay command slots, before wildcard/prefix normalization.
-    /// Renderer consumes this mapping directly; images is the screen-only path.
+    /// Renderer consumes this mapping directly, not the normalized images list.
     pub overlay_slots: Option<[String; 3]>,
+    /// Verified screen command slots, before wildcard/prefix normalization.
+    pub screen_slots: Option<[String; 3]>,
 }
 
 /// Original ef scene state, in command operand order (!bgH/S/V, !stH/S/V).
@@ -895,7 +896,7 @@ impl Vm {
                 self.state = VmState::WaitingMovie;
             }
             CommandKind::Screen => {
-                events.push(VmEvent::SetScreen(parse_layer(&arguments)?));
+                events.push(VmEvent::SetScreen(parse_screen(&arguments)?));
             }
             CommandKind::Overlay => {
                 events.push(VmEvent::SetOverlay(parse_overlay(&arguments)?));
@@ -1261,7 +1262,16 @@ fn parse_layer(arguments: &[String]) -> Result<LayerRequest, String> {
         .map(|argument| strip_resource_prefix(argument))
         .filter(|name| name != "*" && !name.is_empty())
         .collect();
-    Ok(LayerRequest { images, overlay_slots: None })
+    Ok(LayerRequest { images, overlay_slots: None, screen_slots: None })
+}
+
+fn parse_screen(arguments: &[String]) -> Result<LayerRequest, String> {
+    if arguments.len() < 2 {
+        return Err("screen requires at least two operands".into());
+    }
+    let mut request = parse_overlay(arguments)?;
+    request.screen_slots = request.overlay_slots.take();
+    Ok(request)
 }
 
 fn parse_overlay(arguments: &[String]) -> Result<LayerRequest, String> {
@@ -1624,6 +1634,21 @@ mod tests {
             vm.tick(0, no_scripts).unwrap();
         }
         assert_eq!(vm.local("RESULT"), Some(2));
+    }
+
+    #[test]
+    fn screen_preserves_native_slots_before_resource_normalization() {
+        let two = parse_screen(&["[bank]sc_evening01.png".into(), "*".into()]).unwrap();
+        assert_eq!(two.screen_slots.unwrap(), ["", "[bank]sc_evening01.png", "*"]);
+        assert!(two.overlay_slots.is_none());
+        let three = parse_screen(&["first".into(), "*".into(), "third".into(), "ignored".into()]).unwrap();
+        assert_eq!(three.screen_slots.unwrap(), ["first", "*", "third"]);
+        assert!(parse_screen(&[]).is_err());
+        assert!(parse_screen(&["one".into()]).is_err());
+        let mut vm = Vm::new("screen.sc", program(".screen sc_evening01.png *"));
+        let events = vm.tick(0, no_scripts).unwrap();
+        let VmEvent::SetScreen(request) = &events[0] else { panic!("expected screen"); };
+        assert_eq!(request.screen_slots.as_ref().unwrap()[1], "sc_evening01.png");
     }
 
     #[test]
