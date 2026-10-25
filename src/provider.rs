@@ -2106,14 +2106,17 @@ unsafe extern "C" fn submit_platform_response(
             .strip_prefix("index=")
             .and_then(|value| value.parse::<usize>().ok())
         else {
-            return runtime.fail("invalid minori_select response", INVALID_ARGUMENT);
+            return runtime.report_error("invalid minori_select response", INVALID_ARGUMENT);
         };
         let Some(vm) = runtime.vm.as_mut() else {
-            return runtime.fail("select response without a VM", INVALID_STATE);
+            return runtime.report_error("select response without a VM", INVALID_STATE);
         };
         return match vm.complete_select(index) {
-            Ok(()) => OK,
-            Err(error) => runtime.fail(error, INVALID_ARGUMENT),
+            Ok(()) => {
+                runtime.error = safe_cstring("");
+                OK
+            }
+            Err(error) => runtime.report_error(error, INVALID_ARGUMENT),
         };
     }
     if operation == "minori_audio" {
@@ -2187,6 +2190,29 @@ mod tests {
             paused: false,
             delivered_serial: 0,
         }
+    }
+
+    #[test]
+    fn invalid_choice_response_can_be_retried_without_freezing_story() {
+        let mut runtime = empty_runtime();
+        let source = crate::script::Program::parse(".select Stay:stay Walk:walk\n.label stay\n.set result = 1\n.end\n.label walk\n.set result = 2\n.end").unwrap();
+        let mut vm = crate::vm::Vm::new("choice.sc", source);
+        vm.tick(0, |_| Err("unexpected load".into())).unwrap();
+        runtime.vm = Some(vm);
+        let handle = std::ptr::addr_of_mut!(runtime).cast();
+        for response in [c"index=oops", c"index=42"] {
+            assert_eq!(unsafe { super::submit_platform_response(handle, c"minori_select".as_ptr(), response.as_ptr()) }, super::INVALID_ARGUMENT);
+            assert!(!runtime.failed);
+            assert!(matches!(runtime.vm.as_ref().unwrap().state(), crate::vm::VmState::WaitingSelect { .. }));
+        }
+        assert_eq!(unsafe { super::submit_platform_response(handle, c"minori_select".as_ptr(), c"index=1".as_ptr()) }, super::OK);
+        assert!(runtime.error.to_bytes().is_empty());
+        // A duplicate callback is also a host error, not a fatal VM error.
+        assert_eq!(unsafe { super::submit_platform_response(handle, c"minori_select".as_ptr(), c"index=1".as_ptr()) }, super::INVALID_ARGUMENT);
+        assert!(!runtime.failed);
+        let vm = runtime.vm.as_mut().unwrap();
+        for _ in 0..3 { vm.tick(0, |_| Err("unexpected load".into())).unwrap(); }
+        assert_eq!(vm.local("result"), Some(2));
     }
 
     #[test]
