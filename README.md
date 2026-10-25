@@ -49,10 +49,7 @@ cargo build --bin minori-headless
 ```
 
 `--choose` contains zero-based answers by branch ordinal; unspecified branches use zero.
-An out-of-range answer fails rather than silently selecting a different route. The backend
-writes a diagnostic choice screenshot before answering, streams a story trace even when a
-later tick fails, and stops on `Finished`. It preserves the final frame when the tick budget
-expires. Screenshots use a system CJK font and the provider reveal schedule, not retail font parity.
+An out-of-range answer fails rather than silently selecting a different route. Compare branches by running the same command in separate output directories with different `--choose` lists; for example, use `0,0,0,0,1,0,0` versus `1,1,1,1,1,1,1`. The backend writes a diagnostic choice screenshot before answering, streams a story trace even when a later tick fails, and stops on `Finished`. It preserves the final frame when the tick budget expires. Screenshots use a system CJK font and the provider reveal schedule, not retail font parity. This harness validates provider/headless behavior only, not Aether host startup or Windows retail parity.
 
 Movie requests require `ffmpeg` on PATH: every clip is decoded offline to a null sink, a
 representative decoded video frame is saved, and completion is returned through the normal
