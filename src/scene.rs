@@ -3533,6 +3533,29 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires MINORI_EF_ROOT pointing to a local ef installation"]
+    fn live_first_overlay_filters_stage_first_argument_and_survives_restore() {
+        let root = std::env::var_os("MINORI_EF_ROOT").expect("set MINORI_EF_ROOT");
+        let vfs = Vfs::mount_game(root).unwrap();
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        let request = StageRequest {base_spec:"st_kei10a02-.png".into(),base_x:0,base_y:0,image:"bg_scl002a01_00_f.png".into(),x:0,y:0,extras:Vec::new()};
+        scene.apply_stage(&vfs, &request, None).unwrap();
+        let plain = scene.frame.rgba.clone();
+        scene.apply_overlay(&vfs, &["or_kei00a.png".into(),"*".into(),"*".into()]).unwrap();
+        let tinted = scene.frame.rgba.clone();
+        assert!(plain != tinted, "first native slot failed to tint actual first stage asset");
+        let capture = scene.save_capture();
+        let state = bincode::deserialize(&bincode::serialize(&scene.manual_state()).unwrap()).unwrap();
+        let mut restored = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        restored.restore_manual_state(&vfs,capture,state).unwrap();
+        restored.rebuild_overlay_stage().unwrap();
+        restored.refresh_composed_frame();
+        assert!(restored.frame.rgba == tinted, "restored first-slot tint changed on redraw");
+        restored.apply_overlay(&vfs, &["*".into(),"*".into(),"*".into()]).unwrap();
+        assert!(restored.frame.rgba == plain, "clearing restored first slot failed to recover raw asset");
+    }
+
+    #[test]
     fn first_overlay_slot_filters_base_spec_only_and_clear_is_reversible() {
         let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
         let raw = Frame { width:1,height:1,rgba:vec![64,192,128,255],serial:0 };
