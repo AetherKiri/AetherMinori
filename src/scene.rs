@@ -291,6 +291,21 @@ struct SaveMenuState {
 #[allow(dead_code)]
 struct SnowFadeState { fading: bool, elapsed: u32, alpha: i32, done: bool }
 
+/// Native multimedia callback 0x5353a0 divides milliseconds by ten.
+/// This only adapts the clock; it does not invent the accepted-update threshold.
+#[derive(Debug, Default)]
+#[allow(dead_code)]
+struct SnowClock { tick: u32, remainder_ms: u32 }
+#[allow(dead_code)]
+impl SnowClock {
+    fn advance(&mut self, milliseconds: u32) -> u32 {
+        let total = u64::from(self.remainder_ms) + u64::from(milliseconds);
+        self.remainder_ms = (total % 10) as u32;
+        self.tick = self.tick.wrapping_add((total / 10) as u32);
+        self.tick
+    }
+}
+
 #[allow(dead_code)]
 impl SnowFadeState {
     fn fadeout(&mut self) {
@@ -4367,6 +4382,21 @@ mod tests {
         let target = &scene.transition.as_ref().unwrap().new_rgba;
         let bottom_left = ((HEIGHT - 1) * WIDTH * 4) as usize;
         assert_eq!(&target[bottom_left..bottom_left + 4], &[255; 4]);
+    }
+
+    #[test]
+    fn native_snow_clock_preserves_fractional_ten_ms_ticks() {
+        let mut clock = SnowClock::default();
+        assert_eq!(clock.advance(9),0);
+        assert_eq!(clock.advance(0),0);
+        assert_eq!(clock.advance(7),1);
+        assert_eq!(clock.remainder_ms,6);
+        assert_eq!(clock.advance(16),3);
+        assert_eq!(clock.remainder_ms,2);
+        let mut batched = SnowClock::default();
+        assert_eq!(batched.advance(32),clock.tick);
+        clock.tick = u32::MAX; clock.remainder_ms = 9;
+        assert_eq!(clock.advance(1),0);
     }
 
     #[test]
