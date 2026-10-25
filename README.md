@@ -62,6 +62,35 @@ whole BGM tracks is expensive. It does not mix channels or send sound to a devic
 it, ordinary audio requests are only recorded (the provider still decodes voice for lip analysis).
 No licensed game assets are included in this repository.
 
+## ef renderer and save verification (2026-10-25)
+
+The ef static renderer now uses instruction-derived, asset-local Overlay and Screen strip
+operations rather than opaque full-frame strip coverage. The three command slots target the
+first stage argument, background tuple and standing extras respectively. Static BG/ST S/V
+processing precedes Overlay → Screen; first-stage surfaces and dynamic character/ANI HSV
+are not silently treated as the same path. WScroll standing preparation retains S/V; its
+background destination and snapshot-refresh lifetime remain distinct native cases.
+
+Manual saves currently write runtime-specific `MINORISV` version 9 with raw filter state,
+original stage inputs and camera state. Older runtime save envelopes have explicit migrations;
+this does **not** establish compatibility with retail saves or full active-effect restoration.
+
+To include tests requiring your own local game installation:
+
+```bash
+EF_GAME_ROOT="/path/to/ef - the first tale" \
+MINORI_EF_ROOT="/path/to/ef - the first tale" \
+cargo test --lib -- --ignored
+```
+
+Both variables are needed. The ordinary suite omits these asset-dependent tests. See the
+[Screen visual acceptance](<acceptance/SCREEN_VISUAL_ACCEPTANCE.md>),
+[34,000-update replay](<acceptance/ROUND84.md>),
+[60,000-update alternate replay](<acceptance/ROUND85_ALTERNATE.md>) and
+[static HSV limitations](<acceptance/STATIC_HSV_INTEGRATION.md>) for observed results and
+remaining boundaries. These tests and screenshots do not certify all routes, endings,
+native cache semantics, original-executable pixel parity or actual Aether GUI startup.
+
 ## License
 
 GPL-3.0-or-later, consistent with the AetherKiri project it was extracted from.
