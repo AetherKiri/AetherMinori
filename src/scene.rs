@@ -1408,7 +1408,7 @@ impl SceneSystem {
         self.profile.ui.message_panel_offset_y
     }
 
-    fn refresh_composed_frame(&mut self) {
+    fn compose_current_scene(&self) -> Vec<u8> {
         let mut composed =
             compose_characters(self.canvas, &self.background_rgba, &self.characters);
         if let Some(particles) = self.particles.as_ref() {
@@ -1430,6 +1430,11 @@ impl SceneSystem {
             self.panel_transition.as_ref(),
             self.panel.as_ref(),
         );
+        composed
+    }
+
+    fn refresh_composed_frame(&mut self) {
+        let composed = self.compose_current_scene();
         if let Some(transition) = self.transition.as_mut() {
             transition.new_rgba = composed;
         } else {
@@ -1642,14 +1647,7 @@ impl SceneSystem {
         self.scroll = None;
         self.shake = None;
         self.background_rgba = target.rgba;
-        let mut target_rgba = compose_characters(self.canvas, &self.background_rgba, &self.characters);
-        composite_panel_state(
-            self.canvas,
-            self.panel_offset_y(),
-            &mut target_rgba,
-            self.panel_transition.as_ref(),
-            self.panel.as_ref(),
-        );
+        let target_rgba = self.compose_current_scene();
 
         match transition {
             Some(config)
@@ -3245,6 +3243,21 @@ mod tests {
         for _ in 0..3 { scene.tick_scroll(10).unwrap(); }
         scene.clear_effect().unwrap();
         for (offset, pixel) in opaque { assert_eq!(&scene.frame.rgba[offset..offset + 4], pixel); }
+    }
+
+    #[test]
+    #[ignore = "requires MINORI_EF_ROOT pointing to a local ef installation"]
+    fn live_stage_target_keeps_active_composition_layers() {
+        let root = std::env::var_os("MINORI_EF_ROOT").expect("set MINORI_EF_ROOT");
+        let vfs = Vfs::mount_game(root).unwrap();
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        scene.frame_stills.push(Frame { width: 1, height: 1, rgba: vec![17, 29, 43, 255], serial: 0 });
+        let request = StageRequest { base_spec: "*".into(), base_x: 0, base_y: 0, image: "bgw_normal011a01_03_10001_sepia.png".into(), x: 0, y: 0, extras: Vec::new() };
+        scene.apply_stage(&vfs, &request, None).unwrap();
+        assert_eq!(&scene.frame.rgba[..4], &[17, 29, 43, 255]);
+        let transition = TransitionConfig { transition_type: 0, mask: "*".into(), duration: 100 };
+        scene.apply_stage(&vfs, &request, Some(&transition)).unwrap();
+        assert_eq!(&scene.transition.as_ref().unwrap().new_rgba[..4], &[17, 29, 43, 255]);
     }
 
     #[test]
