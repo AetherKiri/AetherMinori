@@ -65,8 +65,11 @@ fn main() -> Result<(), String> {
     runtime.set_option("minori.language", &language)?;
     if let Some(script) = &start {
         runtime.set_option("minori.start", script)?;
-        runtime.restart()?;
     }
+    // `Headless::open` starts the default script immediately. Apply language and
+    // optional entry-script settings before restarting so the first script uses
+    // the requested variant, not only its later chained scripts.
+    runtime.restart()?;
 
     // The runtime emits minori_message platform requests; the host turns them
     // into labels. The headless backend has no host, so it rasterises the same
