@@ -974,7 +974,9 @@ impl SceneSystem {
         let base = native_surface(&layers.base, self.overlay_slots[1].as_ref(), self.screen_slots[1].as_ref());
         let mut output = crop_background(self.canvas, &base, self.camera_x, self.camera_y)?;
         for (raw, x, y) in &layers.scrolling {
-            let layer = native_surface(raw, self.overlay_slots[2].as_ref(), self.screen_slots[2].as_ref());
+            // Native WScroll refresh copies the prepared standing surface from
+            // 5068e0; background preparation has a distinct HSV destination.
+            let layer = self.static_stage_surface(raw, 2);
             composite_wrapped_horizontal(
                 &mut output,
                 &layer,
@@ -4333,6 +4335,24 @@ mod tests {
         let target = &scene.transition.as_ref().unwrap().new_rgba;
         let bottom_left = ((HEIGHT - 1) * WIDTH * 4) as usize;
         assert_eq!(&target[bottom_left..bottom_left + 4], &[255; 4]);
+    }
+
+    #[test]
+    fn wscroll_retains_static_extra_sv_before_placement() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        scene.canvas = Canvas::new(2,1);
+        let raw = Frame {width:1,height:1,rgba:vec![91,137,183,255],serial:0};
+        scene.effect_layers = Some(StageEffectLayers {base:Frame {width:2,height:1,rgba:vec![0,0,0,255,0,0,0,255],serial:0},scrolling:vec![(raw.clone(),0,0)],foreground:Vec::new()});
+        scene.hsv_filter = HsvFilter {st_s:-20,st_v:-10,..Default::default()};
+        scene.wscroll = Some(WScrollState {_period:60,speed:-2,elapsed_ms:0,ticks:0,previous_velocity:0,remainder:0,offset:0});
+        scene.render_wscroll().unwrap();
+        let mut expected = raw.clone();
+        ef_sv_matrix_rgba(&mut expected.rgba,-20,-10);
+        assert_eq!(&scene.background_rgba[..4], &expected.rgba);
+        let once = scene.background_rgba.clone();
+        scene.render_wscroll().unwrap();
+        assert_eq!(scene.background_rgba,once);
+        assert_eq!(scene.effect_layers.as_ref().unwrap().scrolling[0].0,raw);
     }
 
     #[test]
