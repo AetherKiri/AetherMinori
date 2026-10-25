@@ -285,6 +285,27 @@ struct SaveMenuState {
     load: bool,
 }
 
+/// Snow 0x50b920/0x50bbc0 alpha state; caller supplies accepted native-clock
+/// delta. Mapping host milliseconds and update cadence remains separate.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+struct SnowFadeState { fading: bool, elapsed: u32, alpha: i32, done: bool }
+
+#[allow(dead_code)]
+impl SnowFadeState {
+    fn fadeout(&mut self) {
+        if !self.fading { self.fading = true; self.elapsed = 0; }
+    }
+    fn accepted_update(&mut self, delta: u32) {
+        if self.done { return; }
+        self.elapsed = self.elapsed.wrapping_add(delta);
+        let q = self.elapsed >> 4;
+        if self.fading { self.alpha = self.alpha.wrapping_sub(q as i32); }
+        else { self.alpha = (self.alpha as u32).wrapping_add(q).min(256) as i32; }
+        self.done = self.fading && self.alpha < 1;
+    }
+}
+
 /// A falling-particle field, used by the Snow / Sakura / Rain effects.
 #[derive(Debug)]
 struct ParticleState {
@@ -4335,6 +4356,32 @@ mod tests {
         let target = &scene.transition.as_ref().unwrap().new_rgba;
         let bottom_left = ((HEIGHT - 1) * WIDTH * 4) as usize;
         assert_eq!(&target[bottom_left..bottom_left + 4], &[255; 4]);
+    }
+
+    #[test]
+    fn native_snow_fade_uses_cumulative_updates_and_idempotent_trigger() {
+        let mut state = SnowFadeState::default();
+        assert_eq!(state.alpha,0);
+        for expected in [1,3,6,10] { state.accepted_update(16); assert_eq!(state.alpha,expected); }
+        state.accepted_update(4096);
+        assert_eq!(state.alpha,256);
+        state.fadeout();
+        assert_eq!(state.elapsed,0);
+        state.accepted_update(16);
+        assert_eq!(state.alpha,255);
+        state.fadeout();
+        assert_eq!(state.elapsed,16);
+        state.accepted_update(16);
+        assert_eq!(state.alpha,253);
+        state.accepted_update(4096);
+        assert!(state.done);
+        assert_eq!(state.alpha,-5);
+        let finished = state;
+        state.accepted_update(16);
+        assert_eq!(state,finished);
+        let mut invisible = SnowFadeState::default();
+        invisible.fadeout(); invisible.accepted_update(1);
+        assert!(invisible.done);
     }
 
     #[test]
