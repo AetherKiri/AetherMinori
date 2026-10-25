@@ -977,7 +977,8 @@ impl SceneSystem {
         for (layer, x, y) in &layers.foreground {
             // Screen-space overlay: the camera moves the scene behind it, not
             // the frame itself.
-            composite_viewport(&mut output, layer, -(*x), -(*y));
+            let filtered = overlay_surface(layer, self.overlay_slots[0].as_ref());
+            composite_viewport(&mut output, &filtered, -(*x), -(*y));
         }
         self.background_rgba = output.rgba;
         self.render_panel_frame();
@@ -1193,7 +1194,8 @@ impl SceneSystem {
         // Keep viewport-space stage overlays independent of camera/effect state.
         if let Some(layers) = self.effect_layers.as_ref() {
             for (image, x, y) in &layers.foreground {
-                composite_source_over(&mut target, image, *x, *y);
+                let filtered = overlay_surface(image, self.overlay_slots[0].as_ref());
+                composite_source_over(&mut target, &filtered, *x, *y);
             }
         }
         self.background_rgba = target.rgba;
@@ -1451,7 +1453,7 @@ impl SceneSystem {
         Ok(())
     }
 
-    /// Native slots: bank1 (scope unresolved), background, standing art.
+    /// Native slots: first stage argument (base-spec), background tuple, standing extras.
     /// Raw dimensions are essential: alignment is destination-asset-local.
     pub fn apply_overlay(&mut self, vfs: &Vfs, slots: &[String; 3]) -> Result<(), String> {
         let mut decoded = [None, None, None];
@@ -1709,13 +1711,15 @@ impl SceneSystem {
             for name in layers {
                 if name != "*" && !name.is_empty() {
                     let overlay = decode_png(&vfs.read(name)?)?;
-                    composite_source_over(&mut target, &overlay, request.base_x, request.base_y);
+                    let filtered = overlay_surface(&overlay, self.overlay_slots[0].as_ref());
+                    composite_source_over(&mut target, &filtered, request.base_x, request.base_y);
                     foreground.push((overlay, request.base_x, request.base_y));
                 }
             }
             if !screen.is_empty() && screen != "*" {
                 let overlay = decode_png(&vfs.read(screen)?)?;
-                composite_source_over(&mut target, &overlay, request.base_x, request.base_y);
+                let filtered = overlay_surface(&overlay, self.overlay_slots[0].as_ref());
+                    composite_source_over(&mut target, &filtered, request.base_x, request.base_y);
                 foreground.push((overlay, request.base_x, request.base_y));
             }
         }
@@ -3526,6 +3530,25 @@ mod tests {
         assert_eq!(actors[&1].mouth.as_ref().unwrap().medium.image, patch.image);
         assert_eq!(compose_characters_overlay(Canvas::new(2,3), &background, &actors, Some(&strip)), output);
         assert_ne!(compose_characters_overlay(Canvas::new(2,3), &background, &actors, None), output);
+    }
+
+    #[test]
+    fn first_overlay_slot_filters_base_spec_only_and_clear_is_reversible() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        let raw = Frame { width:1,height:1,rgba:vec![64,192,128,255],serial:0 };
+        scene.effect_layers = Some(StageEffectLayers { base:scene.background_source.clone(), scrolling:Vec::new(), foreground:vec![(raw.clone(),0,0)] });
+        scene.recrop_stage_background().unwrap();
+        assert_eq!(&scene.background_rgba[..4], &raw.rgba);
+        scene.overlay_slots[0] = Some(Frame {width:1,height:1,rgba:vec![255,0,128,255],serial:0});
+        scene.rebuild_overlay_stage().unwrap();
+        assert_eq!(&scene.background_rgba[..4], &[128,129,127,255]);
+        let tinted = scene.background_rgba.clone();
+        scene.rebuild_overlay_stage().unwrap();
+        assert!(scene.background_rgba == tinted);
+        assert_eq!(scene.effect_layers.as_ref().unwrap().foreground[0].0,raw);
+        scene.overlay_slots[0] = None;
+        scene.rebuild_overlay_stage().unwrap();
+        assert_eq!(&scene.background_rgba[..4], &raw.rgba);
     }
 
     #[test]

@@ -1,0 +1,5 @@
+# First overlay slot — stage first argument
+
+Read-only native investigation resolved bank1 route: stage parser4e4fd3..fdc stores first argument into command+7c; setter4cf663..66c moves it to scene+58;4df863..888 calls507140 where ctx418 filters bank1 surfaces1b8/2d8 at50790f/507f67. Image tuple separately routes throughscene74 to507010(ctx98), second slot. Bank1 and2 BOTH map bg archive; filename prefixes cannot determine role. Corpus101_01:169..172 and209_01:7..10 use this first slot.
+
+Added first-slot filtering on raw base-spec surfaces before initial placement, ordinary camera recrop and WScroll viewport composition. Raw foreground remains unmodified; shared Overlay kernel respects asset-local bottom alignment. New regression failed before integration and passes after: exact tinted pixel, repeated rebuild idempotence, unchanged original, clear reversal. Suite120 passed/11 ignored plus1 CLI passed; diff check clean. No new screenshot yet; native split/override/base-spec grammar remains incompletely recovered. Original resource prefix routing still unresolved.
