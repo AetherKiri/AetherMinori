@@ -1,0 +1,7 @@
+# Original overlay command native handoff
+
+Rechecked original executable SHA2569824732313d13136cb2300f33038a655ba480ae01cefc2749028d1b1748b4f9e with bounded GNU objdump. Literal0x5785e8 is .overlay; registration calls constructor0x4ebc10 and pairs it with that literal at0x4cbaaf. Constructor installs vtable0x576b84. Slots+4/+8 resolve parser0x4eb9a0 / executor0x4ebcf0.
+
+Parser requires >=2 argument objects, dispatches first optional argument only when >2, then two subsequent arguments through vtable+0x74/+0x7c. Executor passes string objects+0x44/+0x60/+0x7c to0x4dd5f0. Handoff normalizes three strings and stores first two into scene+0xf0/+0x10c (capture ended before final store); therefore treating all arguments as a generic flat vector of simultaneously source-over strips is not native-proven. Need follow these separate scene fields through renderer and determine per-argument consumers/blend. Do not interpret optional first argument or wildcard semantics solely from these slots.
+
+Raw bounded handoff retained outside repo at ef-re/overlay-handoff-round79.txt. REA import of ef-round18-bundle.json succeeded1 retained record; inspect_with_objdump rejected unknown start_address/stop_address keys, so bounded capture used local objdump instead (not claimed REA-authenticated Evidence). No target execution/open native session. No implementation change or exact pixel blend resolved. Gym discrepancy still open.
