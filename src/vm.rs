@@ -1637,6 +1637,18 @@ mod tests {
     }
 
     #[test]
+    fn terminal_unlock_persistence_gap_diagnostic() {
+        let mut vm = Vm::new("badend.sc", program(".setGlobal BADEND1 = 1\n.end"));
+        let mut events = Vec::new();
+        for _ in 0..3 { events.extend(vm.tick(0, no_scripts).unwrap()); }
+        assert_eq!(vm.global("BADEND1"), Some(1));
+        assert_eq!(vm.state(), &VmState::Finished);
+        // Diagnostic only: the unlock exists in RAM but End/EOF currently sends
+        // no durable-state request. Native terminal policy remains under audit.
+        assert!(!events.iter().any(|event| matches!(event, VmEvent::PersistGlobals)));
+    }
+
+    #[test]
     fn screen_preserves_native_slots_before_resource_normalization() {
         let two = parse_screen(&["[bank]sc_evening01.png".into(), "*".into()]).unwrap();
         assert_eq!(two.screen_slots.unwrap(), ["", "[bank]sc_evening01.png", "*"]);
