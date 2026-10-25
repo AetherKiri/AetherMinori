@@ -1,0 +1,5 @@
+# Round 72 — character freeze composition consistency
+
+Found freeze_characters retained particles but omitted screen/overlay/frame layers and, on an active transition, returned before compositing the panel. Deterministic active frame-layer sentinel disappeared after freeze (failed regression). Freeze now composites retained layers and panel before assigning display or transition destination, avoiding duplicate panel composition outside transitions. Character clearing behavior is unchanged. Regression now passes; full suite 108 passed, 9 ignored; 1 CLI passed; diff check passed. No native freeze lifetime claim or new screenshot.
+
+Also ran all nine local-install opt-in tests together before the freeze patch: seven passed, two VFS tests failed solely due to missing EF_GAME_ROOT (newer tests use MINORI_EF_ROOT). Re-ran with both environment variables: all nine passed in 3.39s, including audio page CRCs, movie headers, dual runtime, choice recovery, manual restore, actual snow motion and stage/window composition tests. No claim of audible playback or original execution. Overall objective remains incomplete.

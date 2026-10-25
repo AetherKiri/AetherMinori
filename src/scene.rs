@@ -1449,16 +1449,13 @@ impl SceneSystem {
         if let Some(particles) = self.particles.as_ref() {
             composite_particles(self.canvas, &mut composed, particles);
         }
+        composite_layers(self.canvas, &mut composed, &self.screen_layers, &self.overlay_layers, &self.frame_stills);
+        composite_panel_state(self.canvas, self.panel_offset_y(), &mut composed, self.panel_transition.as_ref(), self.panel.as_ref());
         if let Some(transition) = self.transition.as_mut() {
             transition.new_rgba = composed;
             return;
         }
         self.frame.rgba = composed;
-        if let Some(transition) = self.panel_transition.as_ref() {
-            render_panel_transition(self.canvas, self.panel_offset_y(), &mut self.frame.rgba, transition);
-        } else if let Some(panel) = &self.panel {
-            composite_panel(self.canvas, self.panel_offset_y(), &mut self.frame.rgba, panel, 255);
-        }
         self.frame.serial = self.frame.serial.saturating_add(1);
     }
 
@@ -3258,6 +3255,15 @@ mod tests {
         let transition = TransitionConfig { transition_type: 0, mask: "*".into(), duration: 100 };
         scene.apply_stage(&vfs, &request, Some(&transition)).unwrap();
         assert_eq!(&scene.transition.as_ref().unwrap().new_rgba[..4], &[17, 29, 43, 255]);
+    }
+
+    #[test]
+    fn freeze_redraw_retains_frame_layers() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        scene.frame_stills.push(Frame { width: 1, height: 1, rgba: vec![17, 29, 43, 255], serial: 0 });
+        scene.refresh_composed_frame();
+        scene.freeze_characters();
+        assert_eq!(&scene.frame.rgba[..4], &[17, 29, 43, 255]);
     }
 
     #[test]
