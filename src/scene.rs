@@ -3237,6 +3237,28 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires MINORI_EF_ROOT pointing to a local ef installation"]
+    fn live_restore_reapplies_saved_layers_on_subsequent_redraw() {
+        let root = std::env::var_os("MINORI_EF_ROOT").expect("set MINORI_EF_ROOT");
+        let vfs = Vfs::mount_game(root).unwrap();
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        let mut pixels = vec![0; scene.canvas.bytes()];
+        for pixel in pixels.chunks_exact_mut(4) { pixel.copy_from_slice(&[17, 29, 43, 255]); }
+        scene.frame_stills.push(Frame { width: scene.canvas.width, height: scene.canvas.height, rgba: pixels.clone(), serial: 0 });
+        scene.render_panel_frame();
+        let capture = scene.save_capture();
+        let state: ManualSceneState = bincode::deserialize(&bincode::serialize(&scene.manual_state()).unwrap()).unwrap();
+        scene.frame_stills.clear();
+        scene.render_panel_frame();
+        assert_ne!(scene.frame.rgba, pixels);
+        scene.restore_manual_state(&vfs, capture, state).unwrap();
+        scene.render_panel_frame();
+        assert_eq!(scene.frame.rgba, pixels);
+        let state = scene.manual_state();
+        assert_eq!(state.frame_stills.len(), 1);
+    }
+
+    #[test]
     fn manual_scene_layers_roundtrip() {
         let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
         let layer = Frame { width: 1, height: 1, rgba: vec![17, 29, 43, 255], serial: 0 };
