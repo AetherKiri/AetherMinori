@@ -1444,8 +1444,11 @@ impl SceneSystem {
     }
 
     fn freeze_characters(&mut self) {
-        let mut composed =
+        // Persist the baked character pixels as the new composition base;
+        // transient particles/layers/panel must not be baked into it.
+        self.background_rgba =
             freeze_character_layers(self.canvas, &self.background_rgba, &mut self.characters);
+        let mut composed = self.background_rgba.clone();
         if let Some(particles) = self.particles.as_ref() {
             composite_particles(self.canvas, &mut composed, particles);
         }
@@ -3255,6 +3258,18 @@ mod tests {
         let transition = TransitionConfig { transition_type: 0, mask: "*".into(), duration: 100 };
         scene.apply_stage(&vfs, &request, Some(&transition)).unwrap();
         assert_eq!(&scene.transition.as_ref().unwrap().new_rgba[..4], &[17, 29, 43, 255]);
+    }
+
+    #[test]
+    fn frozen_character_survives_subsequent_composition() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        scene.characters.insert(1, character(200, true, true));
+        scene.freeze_characters();
+        let frozen = scene.frame.rgba.clone();
+        assert!(frozen.chunks_exact(4).any(|p| p[0] == 200));
+        assert!(scene.characters.is_empty());
+        scene.refresh_composed_frame();
+        assert!(scene.frame.rgba == frozen, "frozen character pixels disappeared after redraw");
     }
 
     #[test]
