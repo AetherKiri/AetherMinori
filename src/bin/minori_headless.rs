@@ -92,7 +92,7 @@ fn main() -> Result<(), String> {
         if clicks > 0 && index % (frames / clicks.max(1)).max(1) == 0 {
             runtime.press()?;
         }
-        for (name, value) in aether_minori_runtime::headless::take_requests() {
+        for (name, value) in runtime.take_requests() {
             requests.push((name.clone(), value.clone()));
             match name.as_str() {
                 "minori_audio" if verify_audio => {

@@ -23,6 +23,8 @@ const PIXEL_RGBA8888: u32 = 1;
 pub struct Headless {
     opaque: *mut c_void,
     root: String,
+    // Box keeps the callback user-data address stable when the harness moves.
+    requests: Box<RequestQueue>,
 }
 
 // The provider owns a boxed Runtime and never shares it across threads; the
@@ -32,10 +34,10 @@ unsafe impl Send for Headless {}
 /// Platform requests the runtime issued, in order. The host normally services
 /// these (audio playback, message text on screen, dialogs); the harness records
 /// them so an acceptance run can assert the story actually reached them.
-static REQUESTS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+type RequestQueue = Mutex<Vec<(String, String)>>;
 
-unsafe extern "C" fn record_request(_: *mut c_void, operation: *const c_char, argument: *const c_char) {
-    if operation.is_null() {
+unsafe extern "C" fn record_request(user_data: *mut c_void, operation: *const c_char, argument: *const c_char) {
+    if user_data.is_null() || operation.is_null() {
         return;
     }
     let name = unsafe { CStr::from_ptr(operation) }
@@ -48,23 +50,18 @@ unsafe extern "C" fn record_request(_: *mut c_void, operation: *const c_char, ar
             .to_string_lossy()
             .into_owned()
     };
-    if let Ok(mut requests) = REQUESTS.lock() {
+    // The owning Headless keeps this queue alive through provider destruction.
+    let queue = unsafe { &*(user_data as *const RequestQueue) };
+    if let Ok(mut requests) = queue.lock() {
         requests.push((name, value));
     }
 }
 
-pub fn take_requests() -> Vec<(String, String)> {
-    REQUESTS
-        .lock()
-        .map(|mut requests| std::mem::take(&mut *requests))
-        .unwrap_or_default()
-}
-
-fn host_struct() -> EngineRuntimeHost {
+fn host_struct(requests: &RequestQueue) -> EngineRuntimeHost {
     EngineRuntimeHost {
         struct_size: std::mem::size_of::<EngineRuntimeHost>() as u32,
         api_version: api_version(),
-        user_data: ptr::null_mut(),
+        user_data: requests as *const RequestQueue as *mut c_void,
         log: None,
         monotonic_time_micros: None,
         platform_request: Some(record_request),
@@ -89,7 +86,8 @@ impl Headless {
         let create = provider.create.ok_or("provider has no create")?;
         let open_game = provider.open_game.ok_or("provider has no open_game")?;
 
-        let host = host_struct();
+        let requests = Box::new(Mutex::new(Vec::new()));
+        let host = host_struct(&requests);
         let writable_c = CString::new(writable.to_string_lossy().as_bytes())
             .map_err(|_| "writable path contains a NUL".to_string())?;
         let cache_c = writable_c.clone();
@@ -110,6 +108,7 @@ impl Headless {
         let mut harness = Self {
             opaque,
             root: root.to_string_lossy().into_owned(),
+            requests,
         };
 
         for &(key, value) in options {
@@ -124,6 +123,14 @@ impl Headless {
             return Err(format!("open_game failed with {result}: {error}"));
         }
         Ok(harness)
+    }
+
+    /// Drain only this runtime's platform requests, in callback order.
+    pub fn take_requests(&mut self) -> Vec<(String, String)> {
+        self.requests
+            .lock()
+            .map(|mut requests| std::mem::take(&mut *requests))
+            .unwrap_or_default()
     }
 
     pub fn set_option(&mut self, key: &str, value: &str) -> Result<(), String> {
@@ -297,6 +304,25 @@ impl Headless {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn callback_queues_are_isolated_and_survive_owner_moves() {
+        let first = Box::new(Mutex::new(Vec::new()));
+        let second = Box::new(Mutex::new(Vec::new()));
+        let host = host_struct(&first);
+        let other_host = host_struct(&second);
+        let moved = first;
+        let operation = CString::new("minori_select").unwrap();
+        let argument = CString::new("choice one").unwrap();
+        unsafe {
+            host.platform_request.unwrap()(host.user_data, operation.as_ptr(), argument.as_ptr());
+            other_host.platform_request.unwrap()(other_host.user_data, operation.as_ptr(), ptr::null());
+            record_request(ptr::null_mut(), operation.as_ptr(), argument.as_ptr());
+            record_request(host.user_data, ptr::null(), argument.as_ptr());
+        }
+        assert_eq!(*moved.lock().unwrap(), vec![("minori_select".into(), "choice one".into())]);
+        assert_eq!(*second.lock().unwrap(), vec![("minori_select".into(), String::new())]);
+    }
 
     #[test]
     fn startup_options_are_validated_before_game_open() {
