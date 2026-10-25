@@ -410,6 +410,20 @@ impl Runtime {
         } else {
             scene.restore_save_capture(frame)?;
         }
+        // Old voice/SE playback belongs to the discarded timeline, not the
+        // restored dialogue boundary. Notify the host rather than only clearing
+        // debug bookkeeping; BGM is restored separately below.
+        for slot in 1..5 {
+            self.request_audio(AudioHostRequest {
+                slot, name: "*", data: None, looped: false,
+                volume: 100, pan: 0, fade_in: 0, fade_out: 0,
+            })?;
+        }
+        self.current_se = [None, None, None];
+        self.pending_transition = None;
+        self.pending_stage = None;
+        self.pending_panel = None;
+        self.pending_save_slot = None;
         self.vm = Some(vm);
         self.current_message = save.message;
         self.message_reveal = None;
@@ -2199,13 +2213,18 @@ mod tests {
     #[test]
     #[ignore = "requires MINORI_EF_ROOT pointing to a local ef installation"]
     fn live_manual_save_restores_dialogue_and_continues() {
-        unsafe extern "C" fn discard(_: *mut std::ffi::c_void, _: *const std::ffi::c_char, _: *const std::ffi::c_char) {}
+        unsafe extern "C" fn capture(user: *mut std::ffi::c_void, operation: *const std::ffi::c_char, argument: *const std::ffi::c_char) {
+            let requests = unsafe { &mut *user.cast::<Vec<(String, String)>>() };
+            requests.push((unsafe { std::ffi::CStr::from_ptr(operation) }.to_string_lossy().into_owned(), unsafe { std::ffi::CStr::from_ptr(argument) }.to_string_lossy().into_owned()));
+        }
+        let mut requests = Vec::<(String, String)>::new();
         let root = std::env::var("MINORI_EF_ROOT").expect("set MINORI_EF_ROOT");
         let writable = tempfile::tempdir().unwrap();
         let mut runtime = empty_runtime();
         runtime.writable_path = writable.path().to_path_buf();
         runtime.cache_path = writable.path().to_path_buf();
-        runtime.platform_request = Some(discard);
+        runtime.platform_request = Some(capture);
+        runtime.host_user_data = std::ptr::addr_of_mut!(requests).cast();
         runtime.language = crate::script::Language::English;
         runtime.start_script = Some("100_01.sc".into());
         let handle = std::ptr::addr_of_mut!(runtime).cast();
@@ -2225,7 +2244,13 @@ mod tests {
         runtime.save_manual_game(0, "roundtrip").unwrap();
         runtime.vm.as_mut().unwrap().advance_input();
         assert_eq!(unsafe { super::tick(handle, 120) }, super::OK);
+        requests.clear();
         runtime.load_manual_game(0).unwrap();
+        for slot in 1..5 {
+            let prefix = format!("{slot}\t\t");
+            assert!(requests.iter().any(|(op, arg)| op == "minori_audio" && arg.starts_with(&prefix)), "missing stop for slot {slot}: {requests:?}");
+        }
+        assert!(runtime.current_se.iter().all(Option::is_none));
         assert_eq!(runtime.vm.as_ref().unwrap().manual_state().unwrap(), before);
         assert_eq!(runtime.current_message, message);
         assert_eq!(runtime.scene.as_ref().unwrap().save_capture().rgba, pixels);

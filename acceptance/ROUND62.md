@@ -1,0 +1,5 @@
+# Round 62 — stop stale audio on manual restore
+
+Source inspection found manual load cleared current_voice/lip bookkeeping but never sent a voice stop to the host; three SE slots also retained playback and current_se from the discarded timeline. Now load sends explicit stop requests for slots 1–4, clears SE bookkeeping and deferred stage/panel/transition/save-dialog state. BGM restoration remains separate and unchanged. This is consistency of the reconstruction restore contract, not newly proven retail audio policy.
+
+Upgraded the round-61 actual-resource save roundtrip test to capture host requests rather than discard them, asserting stop requests for every non-BGM slot along with prior VM/message/pixel roundtrip assertions and continued progression. Explicit local-install test passed in 1.42 seconds. Default suite: 101 passed, 5 ignored; 1 CLI test passed; diff check passed. Host callback emission verified, not audible playback or asynchronous host teardown. No new screenshot or Windows retail execution; objective remains incomplete.
