@@ -172,6 +172,7 @@ pub(crate) struct ManualSceneState {
     pub camera: Option<ManualCameraState>,
     pub native_overlay: NativeOverlayState,
     pub native_screen: [Option<Frame>; 3],
+    pub hsv_filter: HsvFilter,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -456,6 +457,7 @@ impl SceneSystem {
             overlay_layers: self.overlay_layers.clone(),
             native_overlay: NativeOverlayState { slots: self.overlay_slots.clone(), stage: self.effect_layers.clone() },
             native_screen: self.screen_slots.clone(),
+            hsv_filter: self.hsv_filter,
             frame_stills: self.frame_stills.clone(),
             camera: Some(ManualCameraState {
                 source: self.background_source.clone(),
@@ -611,6 +613,7 @@ impl SceneSystem {
         }
         self.overlay_slots = state.native_overlay.slots;
         self.screen_slots = state.native_screen;
+        self.hsv_filter = state.hsv_filter;
         if let Some(stage) = state.native_overlay.stage {
             // Saved viewport/source are authoritative (including frozen pixels).
             // Retain originals for a later explicit overlay change, not an
@@ -1472,11 +1475,27 @@ impl SceneSystem {
         Ok(())
     }
 
+    /// ef static image tuple / extras only; first/base_spec and dynamic char/ANI
+    /// paths do not have scene-HSV authority. Never mutate the retained original.
+    fn static_stage_surface(&self, raw: &Frame, bank: usize) -> Frame {
+        let mut image = raw.clone();
+        if self.profile.id == "ef-first-tale" {
+            let f = self.hsv_filter;
+            let (h, s, v) = if bank == 1 { (f.bg_h, f.bg_s, f.bg_v) }
+                else { (f.st_h, f.st_s, f.st_v) };
+            // H gates the native S/V call; it is not passed to the kernel.
+            if h != 0 || s != 0 || v != 0 {
+                ef_sv_matrix_rgba(&mut image.rgba, s.clamp(-100, 100), v.clamp(-100, 100));
+            }
+        }
+        native_surface(&image, self.overlay_slots[bank].as_ref(), self.screen_slots[bank].as_ref())
+    }
+
     fn rebuild_overlay_stage(&mut self) -> Result<(), String> {
         let Some(layers) = &self.effect_layers else { return Ok(()); };
-        let mut source = native_surface(&layers.base, self.overlay_slots[1].as_ref(), self.screen_slots[1].as_ref());
+        let mut source = self.static_stage_surface(&layers.base, 1);
         for (raw, x, y) in &layers.scrolling {
-            let image = native_surface(raw, self.overlay_slots[2].as_ref(), self.screen_slots[2].as_ref());
+            let image = self.static_stage_surface(raw, 2);
             composite_source_over(&mut source, &image, *x, *y);
         }
         self.background_source = source;
@@ -1493,11 +1512,10 @@ impl SceneSystem {
         Ok(())
     }
 
-    /// Preserve the original independent background/standing-art HSV state.
-    /// Rendering nonzero corrections remains unresolved; do not reinterpret
-    /// these operands as a global RGB gain on the composited scene.
+    /// Preserve raw state; rebuild only observed static assets from originals.
     pub fn apply_hsv_filter(&mut self, filter: HsvFilter) -> Result<(), String> {
         self.hsv_filter = filter;
+        self.rebuild_overlay_stage()?;
         self.refresh_composed_frame();
         Ok(())
     }
@@ -1519,8 +1537,7 @@ impl SceneSystem {
             &self.overlay_layers,
             &self.frame_stills,
         );
-        // HSV state is retained, but no color equation is applied until the
-        // original transfer function and per-layer consumers are recovered.
+        // No global HSV pass: static assets were filtered before composition.
         composite_panel_state(
             self.canvas,
             self.panel_offset_y(),
@@ -1684,7 +1701,7 @@ impl SceneSystem {
     ) -> Result<bool, String> {
         let mut image = decode_png(&vfs.read(&request.image)?)?;
         let base = image.clone();
-        image = native_surface(&base, self.overlay_slots[1].as_ref(), self.screen_slots[1].as_ref());
+        image = self.static_stage_surface(&base, 1);
         let mut scrolling = Vec::with_capacity(request.extras.len());
         let mut foreground = Vec::new();
         for extra in &request.extras {
@@ -1696,7 +1713,7 @@ impl SceneSystem {
             // to that placement, so a 594x621 sprite at 550 stands on the right
             // of the frame with its head cropped, as the retail build shows.
             let (x, y) = extra_origin(self.canvas, &overlay, extra);
-            let filtered = native_surface(&overlay, self.overlay_slots[2].as_ref(), self.screen_slots[2].as_ref());
+            let filtered = self.static_stage_surface(&overlay, 2);
             composite_source_over(&mut image, &filtered, x, y);
             scrolling.push((overlay, x, y));
         }
@@ -2078,8 +2095,7 @@ fn ef_overlay_strip_region(canvas: Canvas, output: &mut [u8], strip: &Frame, off
 /// Exact 32-bit pixel kernel from ef 0x51f430..0x51f683, expressed in RGBA
 /// rather than native packed 0xAARRGGBB. This is not standard HSV: V enters
 /// every matrix coefficient, and signed IMUL intentionally wraps at 32 bits.
-/// Kept separate until standing-art consumers and stage lifetimes are traced.
-#[allow(dead_code)]
+/// Used only by the observed static image tuple / stage-extra paths.
 fn ef_sv_matrix_rgba(output: &mut [u8], saturation: i32, value: i32) {
     let q = ((saturation.clamp(-100, 100) + 100) << 16) / 100;
     let complement = 65536_i32 - q;
@@ -4032,7 +4048,130 @@ mod tests {
     }
 
     #[test]
-    fn hsv_state_only_fallback_never_applies_global_rgb_gains() {
+    fn static_hsv_routes_independently_before_overlay_screen_and_restores_originals() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        scene.canvas = Canvas::new(3, 1);
+        let base = Frame { width: 3, height: 1, rgba: [91, 137, 183, 255].repeat(3), serial: 0 };
+        let extra = Frame { width: 1, height: 1, rgba: vec![183, 117, 61, 128], serial: 0 };
+        let first = Frame { width: 1, height: 1, rgba: vec![27, 83, 129, 255], serial: 0 };
+        scene.effect_layers = Some(StageEffectLayers { base: base.clone(),
+            scrolling: vec![(extra.clone(), 1, 0)], foreground: vec![(first.clone(), 0, 0)] });
+        scene.rebuild_overlay_stage().unwrap();
+        scene.refresh_composed_frame();
+        let original = scene.frame.rgba.clone();
+        for filter in [
+            HsvFilter { bg_h: 999, bg_s: -37, bg_v: 14, ..Default::default() },
+            HsvFilter { st_h: -999, st_s: 43, st_v: -12, ..Default::default() },
+            HsvFilter { bg_h: i32::MIN, bg_s: -999, bg_v: 999,
+                st_h: i32::MAX, st_s: 999, st_v: -999 },
+        ] {
+            scene.apply_hsv_filter(filter).unwrap();
+            assert_eq!(scene.hsv_filter, filter, "raw six operands were clamped");
+            let mut expected = base.clone();
+            ef_sv_matrix_rgba(&mut expected.rgba, filter.bg_s.clamp(-100, 100), filter.bg_v.clamp(-100, 100));
+            let mut standing = extra.clone();
+            ef_sv_matrix_rgba(&mut standing.rgba, filter.st_s.clamp(-100, 100), filter.st_v.clamp(-100, 100));
+            composite_source_over(&mut expected, &standing, 1, 0);
+            composite_source_over(&mut expected, &first, 0, 0);
+            assert_eq!(scene.frame.rgba, expected.rgba);
+            assert_eq!(&scene.frame.rgba[..4], &first.rgba);
+            let tinted = scene.frame.rgba.clone();
+            scene.apply_hsv_filter(filter).unwrap();
+            assert_eq!(scene.frame.rgba, tinted, "repeat accumulated correction");
+            assert_eq!(scene.effect_layers.as_ref().unwrap().base, base);
+            assert_eq!(scene.effect_layers.as_ref().unwrap().scrolling[0].0, extra);
+            scene.apply_hsv_filter(Default::default()).unwrap();
+            assert_eq!(scene.frame.rgba, original);
+        }
+        // H alone triggers the S/V identity call, not a hue rotation.
+        scene.apply_hsv_filter(HsvFilter { bg_h: 70, st_h: -50, ..Default::default() }).unwrap();
+        assert_eq!(scene.frame.rgba, original);
+
+        let strip = Frame { width: 1, height: 2, rgba: [71, 123, 197, 255].repeat(2), serial: 0 };
+        scene.overlay_slots[1] = Some(strip.clone());
+        scene.screen_slots[1] = Some(strip.clone());
+        scene.overlay_slots[2] = Some(strip.clone());
+        scene.screen_slots[2] = Some(strip);
+        let filter = HsvFilter { bg_s: -30, bg_v: 17, st_s: 50, st_v: -9, ..Default::default() };
+        scene.apply_hsv_filter(filter).unwrap();
+        let mut expected_base = base.clone();
+        ef_sv_matrix_rgba(&mut expected_base.rgba, -30, 17);
+        let mut expected = native_surface(&expected_base, scene.overlay_slots[1].as_ref(), scene.screen_slots[1].as_ref());
+        let mut expected_extra = extra.clone();
+        ef_sv_matrix_rgba(&mut expected_extra.rgba, 50, -9);
+        let expected_extra = native_surface(&expected_extra, scene.overlay_slots[2].as_ref(), scene.screen_slots[2].as_ref());
+        composite_source_over(&mut expected, &expected_extra, 1, 0);
+        composite_source_over(&mut expected, &first, 0, 0);
+        assert_eq!(scene.frame.rgba, expected.rgba);
+        let capture = scene.save_capture();
+        let saved: ManualSceneState = bincode::deserialize(&bincode::serialize(&scene.manual_state()).unwrap()).unwrap();
+        assert_eq!(saved.hsv_filter, filter);
+        // Synthetic decoded restore, without a proprietary character-loading VFS.
+        // The opt-in gym test below exercises the complete restore_manual_state.
+        scene.frame = Frame { width: 3, height: 1, ..capture };
+        scene.restore_manual_background(saved.background_rgba, saved.camera).unwrap();
+        scene.effect_layers = saved.native_overlay.stage;
+        scene.overlay_slots = saved.native_overlay.slots;
+        scene.screen_slots = saved.native_screen;
+        scene.hsv_filter = saved.hsv_filter;
+        assert_eq!(scene.hsv_filter, filter);
+        scene.apply_hsv_filter(filter).unwrap();
+        assert_eq!(scene.frame.rgba, expected.rgba);
+        scene.overlay_slots = Default::default();
+        scene.screen_slots = Default::default();
+        scene.apply_hsv_filter(Default::default()).unwrap();
+        assert_eq!(scene.frame.rgba, original);
+    }
+
+    #[test]
+    fn static_hsv_does_not_extend_ef_evidence_to_other_profiles() {
+        let raw = Frame { width: 1, height: 1, rgba: vec![71, 127, 193, 255], serial: 0 };
+        for profile in [&crate::profile::SUPIPARA_PROFILE, &crate::profile::TRINOLINE_PROFILE] {
+            let mut scene = SceneSystem::script_only(profile);
+            scene.hsv_filter = HsvFilter { bg_s: 50, st_v: -40, ..Default::default() };
+            assert_eq!(scene.static_stage_surface(&raw, 1), raw);
+            assert_eq!(scene.static_stage_surface(&raw, 2), raw);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires MINORI_EF_ROOT pointing to a local ef installation"]
+    fn live_gym_static_hsv_matches_sv_kernel_and_save_restores_raw_inputs() {
+        let vfs = Vfs::mount_game(std::env::var_os("MINORI_EF_ROOT").expect("set MINORI_EF_ROOT")).unwrap();
+        let request = StageRequest { base_spec: "*".into(), base_x: 0, base_y: 0,
+            image: "bgc_sch006a01_00_stm.png".into(), x: 0, y: 0,
+            extras: vec![StageExtra { name: "stm_kei06f01.png".into(), first: 200, second: 0 }] };
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        scene.apply_stage(&vfs, &request, None).unwrap();
+        let original = scene.frame.rgba.clone();
+        let filter = HsvFilter { st_h: 5, st_s: -5, st_v: -7, ..Default::default() };
+        scene.apply_hsv_filter(filter).unwrap();
+        let raw = scene.effect_layers.as_ref().unwrap();
+        let mut expected = raw.base.clone();
+        let (sprite, x, y) = &raw.scrolling[0];
+        let mut sprite = sprite.clone();
+        ef_sv_matrix_rgba(&mut sprite.rgba, -5, -7);
+        composite_source_over(&mut expected, &sprite, *x, *y);
+        let expected = crop_background(scene.canvas, &expected, 0, 0).unwrap().rgba;
+        assert_eq!(scene.frame.rgba, expected);
+        assert_ne!(scene.frame.rgba, original);
+        assert!(expected.chunks_exact(4).zip(original.chunks_exact(4)).filter(|(a,b)| a == b).count() > 100_000);
+        let capture = scene.save_capture();
+        let saved = bincode::deserialize(&bincode::serialize(&scene.manual_state()).unwrap()).unwrap();
+        scene.apply_stage(&vfs, &request, None).unwrap();
+        assert_eq!(scene.frame.rgba, expected);
+        scene.apply_hsv_filter(Default::default()).unwrap();
+        assert_eq!(scene.frame.rgba, original);
+        scene.restore_manual_state(&vfs, capture, saved).unwrap();
+        assert_eq!(scene.hsv_filter, filter);
+        scene.apply_hsv_filter(filter).unwrap();
+        assert_eq!(scene.frame.rgba, expected);
+        scene.apply_hsv_filter(Default::default()).unwrap();
+        assert_eq!(scene.frame.rgba, original);
+    }
+
+    #[test]
+    fn hsv_unowned_dynamic_and_capture_fallback_never_applies_global_rgb_gains() {
         let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
         scene.canvas = Canvas::new(2, 1);
         scene.background_rgba = vec![120, 80, 40, 255, 10, 20, 30, 255];

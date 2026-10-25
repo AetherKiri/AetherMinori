@@ -202,7 +202,7 @@ pub(crate) fn save_manual_slot(path: &Path, save: &ManualSaveData) -> Result<(),
     let compressed = compress_to_vec_zlib(&payload, 6);
     let mut output = Vec::with_capacity(16 + compressed.len());
     output.extend_from_slice(MANUAL_SAVE_MAGIC);
-    output.extend_from_slice(&8_u32.to_le_bytes());
+    output.extend_from_slice(&9_u32.to_le_bytes());
     output.extend_from_slice(
         &u32::try_from(payload.len())
             .map_err(|_| "manual save is too large")?
@@ -222,7 +222,7 @@ pub(crate) fn decode_manual_save(data: &[u8]) -> Result<ManualSaveData, String> 
         return Err("manual save header is invalid".into());
     }
     let version = u32::from_le_bytes(data[8..12].try_into().unwrap());
-    if !matches!(version, 1..=8) {
+    if !matches!(version, 1..=9) {
         return Err("manual save version is unsupported".into());
     }
     let expected = u32::from_le_bytes(data[12..16].try_into().unwrap()) as usize;
@@ -301,16 +301,24 @@ pub(crate) fn decode_manual_save(data: &[u8]) -> Result<ManualSaveData, String> 
         if offset + len > payload.len() {
             return Err("manual scene is truncated".into());
         }
-        let scene = if version >= 8 {
+        let scene = if version >= 9 {
             bincode::deserialize(&payload[offset..offset + len])
                 .map_err(|error| format!("decode manual scene: {error}"))?
+        } else if version == 8 {
+            // Exact old ten-field layout; bincode cannot default missing tails.
+            let (background_rgba, panel, characters, rand_state,
+                screen_layers, overlay_layers, frame_stills, camera, native_overlay, native_screen) =
+                bincode::deserialize(&payload[offset..offset + len])
+                    .map_err(|error| format!("decode v8 manual scene: {error}"))?;
+            ManualSceneState { hsv_filter: Default::default(), background_rgba, panel, characters, rand_state,
+                screen_layers, overlay_layers, frame_stills, camera, native_overlay, native_screen }
         } else if version == 7 {
             // Explicit old nine-field tuple; absent bincode tails cannot default.
             let (background_rgba, panel, characters, rand_state,
                 screen_layers, overlay_layers, frame_stills, camera, native_overlay) =
                 bincode::deserialize(&payload[offset..offset + len])
                     .map_err(|error| format!("decode v7 manual scene: {error}"))?;
-            ManualSceneState { background_rgba, panel, characters, rand_state,
+            ManualSceneState { hsv_filter: Default::default(), background_rgba, panel, characters, rand_state,
                 screen_layers, overlay_layers, frame_stills, camera, native_overlay, native_screen: Default::default() }
         } else if version == 6 {
             // Explicit old eight-field tuple: bincode cannot default a tail.
@@ -318,7 +326,7 @@ pub(crate) fn decode_manual_save(data: &[u8]) -> Result<ManualSaveData, String> 
                 screen_layers, overlay_layers, frame_stills, camera) =
                 bincode::deserialize(&payload[offset..offset + len])
                     .map_err(|error| format!("decode v6 manual scene: {error}"))?;
-            ManualSceneState { background_rgba, panel, characters, rand_state,
+            ManualSceneState { hsv_filter: Default::default(), background_rgba, panel, characters, rand_state,
                 screen_layers, overlay_layers, frame_stills, camera, native_overlay: Default::default(), native_screen: Default::default() }
         } else if version == 5 {
             // v5 has exactly seven fields; bincode cannot default an absent tail.
@@ -326,7 +334,7 @@ pub(crate) fn decode_manual_save(data: &[u8]) -> Result<ManualSaveData, String> 
                 screen_layers, overlay_layers, frame_stills) =
                 bincode::deserialize(&payload[offset..offset + len])
                     .map_err(|error| format!("decode v5 manual scene: {error}"))?;
-            ManualSceneState { background_rgba, panel, characters, rand_state,
+            ManualSceneState { hsv_filter: Default::default(), background_rgba, panel, characters, rand_state,
                 screen_layers, overlay_layers, frame_stills, camera: None, native_overlay: Default::default(), native_screen: Default::default() }
         } else {
             // v4 bincode has a fixed four-field layout; serde defaults do not
@@ -334,7 +342,7 @@ pub(crate) fn decode_manual_save(data: &[u8]) -> Result<ManualSaveData, String> 
             let (background_rgba, panel, characters, rand_state) =
                 bincode::deserialize(&payload[offset..offset + len])
                     .map_err(|error| format!("decode legacy manual scene: {error}"))?;
-            ManualSceneState { background_rgba, panel, characters, rand_state,
+            ManualSceneState { hsv_filter: Default::default(), background_rgba, panel, characters, rand_state,
                 screen_layers: Vec::new(), overlay_layers: Vec::new(), frame_stills: Vec::new(), camera: None, native_overlay: Default::default(), native_screen: Default::default() }
         };
         offset += len;
@@ -484,8 +492,13 @@ mod tests {
         assert_legacy_scene_migration(7);
     }
 
+    #[test]
+    fn version_eight_scene_migrates_from_original_binary_layout() {
+        assert_legacy_scene_migration(8);
+    }
+
     fn assert_legacy_scene_migration(version: u32) {
-        // Build the old envelope independently of the current v8 writer.
+        // Build old envelopes independently of the current v9 writer.
         let mut payload = Vec::new();
         push_string(&mut payload, "legacy").unwrap();
         push_string(&mut payload, "100_01.sc").unwrap();
@@ -499,6 +512,12 @@ mod tests {
         let layer = crate::scene::Frame { width: 1, height: 1, rgba: vec![17, 29, 43, 255], serial: 3 };
         let scene = if version == 4 {
             bincode::serialize(&legacy_scene).unwrap()
+        } else if version == 8 {
+            bincode::serialize(&(legacy_scene.0, legacy_scene.1, legacy_scene.2,
+                legacy_scene.3, vec![layer.clone()], vec![layer.clone()], vec![layer.clone()],
+                Option::<crate::scene::ManualCameraState>::None,
+                { let mut native = crate::scene::NativeOverlayState::default(); native.slots[0] = Some(layer.clone()); native },
+                [None, Some(layer.clone()), None])).unwrap()
         } else if version == 7 {
             bincode::serialize(&(legacy_scene.0, legacy_scene.1, legacy_scene.2,
                 legacy_scene.3, vec![layer.clone()], vec![layer.clone()], vec![layer.clone()],
@@ -534,15 +553,16 @@ mod tests {
         assert_eq!(state.background_rgba, vec![9; 4]);
         assert_eq!(state.rand_state, 71);
         assert!(state.camera.is_none());
-        assert_eq!(state.native_screen, [None, None, None]);
-        if version == 7 { assert_eq!(state.native_overlay.slots[0], Some(layer.clone())); }
+        assert_eq!(state.hsv_filter, Default::default());
+        assert_eq!(state.native_screen, if version == 8 { [None, Some(layer.clone()), None] } else { [None, None, None] });
+        if version >= 7 { assert_eq!(state.native_overlay.slots[0], Some(layer.clone())); }
         let expected_layers = if version == 4 { Vec::new() } else { vec![layer] };
         assert_eq!(state.screen_layers, expected_layers);
         assert_eq!(state.overlay_layers, expected_layers);
         assert_eq!(state.frame_stills, expected_layers);
         let upgraded = directory.path().join("upgraded.sav");
         save_manual_slot(&upgraded, &save).unwrap();
-        assert_eq!(&fs::read(&upgraded).unwrap()[8..12], &8_u32.to_le_bytes());
+        assert_eq!(&fs::read(&upgraded).unwrap()[8..12], &9_u32.to_le_bytes());
         assert_eq!(load_manual_slot(&upgraded).unwrap().unwrap(), save);
     }
 
@@ -566,6 +586,7 @@ mod tests {
                 volume: 80,
             }),
             scene: Some(ManualSceneState {
+                hsv_filter: crate::vm::HsvFilter { bg_h: 12, bg_s: -340, bg_v: 56, st_h: -78, st_s: 900, st_v: -12 },
                 native_overlay: Default::default(),
                 native_screen: [None, Some(crate::scene::Frame { width:1, height:1, rgba:vec![31,67,97,0], serial:0 }), None],
                 background_rgba: vec![9; 8],

@@ -196,7 +196,7 @@ pub struct LayerRequest {
 
 /// Original ef scene state, in command operand order (!bgH/S/V, !stH/S/V).
 /// The complete downstream color transfer and layer lifetime remain unresolved.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct HsvFilter {
     pub bg_h: i32,
     pub bg_s: i32,
