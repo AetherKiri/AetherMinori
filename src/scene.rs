@@ -3305,6 +3305,17 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires MINORI_EF_ROOT pointing to a local ef installation"]
+    fn live_gym_overlay_strip_diagnostic() {
+        let root = std::env::var_os("MINORI_EF_ROOT").expect("set MINORI_EF_ROOT");
+        let vfs = Vfs::mount_game(root).unwrap();
+        let strip = decode_png(&vfs.read("or_kei00a.png").unwrap()).unwrap();
+        let layer = stretch_strip(crate::profile::EF_PROFILE.canvas, &strip);
+        println!("strip={}x{} first={:?} expanded_first={:?} opaque={}/{}", strip.width, strip.height, &strip.rgba[..4], &layer.rgba[..4], layer.rgba.chunks_exact(4).filter(|p| p[3] == 255).count(), layer.rgba.len()/4);
+        assert_eq!(layer.rgba.len(), crate::profile::EF_PROFILE.canvas.bytes());
+    }
+
+    #[test]
     fn freeze_does_not_bake_transient_layers_into_background() {
         let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
         scene.characters.insert(1, character(200, true, true));
