@@ -325,6 +325,56 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires MINORI_EF_ROOT pointing to a local ef installation"]
+    fn live_runtimes_keep_requests_and_shared_cache_media_separate() {
+        use std::collections::BTreeMap;
+        let root = std::env::var_os("MINORI_EF_ROOT").expect("set MINORI_EF_ROOT");
+        let writable = tempfile::tempdir().unwrap();
+        let options = [("minori.language", "e"), ("minori.start", "100_01.sc")];
+        let mut first = Headless::open_with_options(Path::new(&root), writable.path(), &options).unwrap();
+        let mut second = Headless::open_with_options(Path::new(&root), writable.path(), &options).unwrap();
+        // open_game itself need not emit requests. Drive both to dialogue first.
+        for step in 0..400 {
+            first.tick(120).unwrap();
+            second.tick(120).unwrap();
+            if step % 5 == 0 { first.press().unwrap(); second.press().unwrap(); }
+        }
+        // Draining one queue must not consume the other runtime's events.
+        assert!(!first.take_requests().is_empty());
+        assert!(!second.take_requests().is_empty());
+        let mut runtimes = [&mut first, &mut second];
+        let mut audio = [BTreeMap::new(), BTreeMap::new()];
+        let mut messages = [0, 0];
+        for step in 0..400 {
+            for (index, runtime) in runtimes.iter_mut().enumerate() {
+                runtime.tick(120).unwrap();
+                if step % 5 == 0 { runtime.press().unwrap(); }
+                for (name, value) in runtime.take_requests() {
+                    if name == "minori_message" { messages[index] += 1; }
+                    if name == "minori_audio" {
+                        let fields: Vec<_> = value.split('\t').collect();
+                        let slot = fields[0].to_owned();
+                        if fields[1].is_empty() { audio[index].remove(&slot); }
+                        else { audio[index].insert(slot, Path::new(fields[1]).to_path_buf()); }
+                    }
+                }
+                assert!(runtime.take_requests().is_empty());
+            }
+        }
+        assert!(messages.iter().all(|&count| count > 0));
+        assert!(!audio[0].is_empty() && !audio[1].is_empty());
+        for path in audio[0].values() {
+            assert!(path.is_file());
+            assert!(!audio[1].values().any(|other| path == other));
+        }
+        let retained: Vec<_> = audio[1].values().map(|path| (path.clone(), std::fs::read(path).unwrap())).collect();
+        drop(first);
+        for (path, bytes) in retained { assert_eq!(std::fs::read(path).unwrap(), bytes); }
+        second.tick(120).unwrap();
+        assert!(second.debug_info().contains("script=100_01.sc"));
+    }
+
+    #[test]
     fn startup_options_are_validated_before_game_open() {
         let result = Headless::open_with_options(
             Path::new("missing-game-root"),
