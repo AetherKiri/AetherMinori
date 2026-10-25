@@ -2,7 +2,7 @@
 
 ## Work
 
-Started a second 240,000-loop headless replay using alternate choices (`--choose 1,1,1,1,1,1,1`) and a separate output directory, preserving the round-41 route artifacts. It is still in progress at report time; its trace is shorter than the completed primary route and initial emitted trace rows show script startup. No alternate-route completion or branch outcomes are claimed yet. The tracked job is `bash-44a6212474804fff`; collect that exact job before claiming completion.
+Ran a second 240,000-loop headless replay using alternate choices (`--choose 1,1,1,1,1,1,1`) in a separate output directory. It exited successfully at loop 58,368; trace ends `58368	none	880	Finished`, runtime state `Finished`, local `favMiyako_d=1`, no error, and three select requests. It differs from the primary route, which completed at 181,064 with `favMiyako=2`/`favMiyako_a=1`. The alternate route thus reaches a different finite story endpoint and demonstrates at least one additional choice branch in headless mode. Four checkpoint PNGs were written; I personally inspected 24,000 and 48,000, which show different character artwork and Chinese dialogue. This does not imply all route combinations were exercised or that endings match retail. Job `bash-44a6212474804fff` was collected at exit code 0.
 
 ## Host / test boundary
 
