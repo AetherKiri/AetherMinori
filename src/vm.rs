@@ -335,6 +335,12 @@ impl Vm {
         if self.frames.len() != 1 {
             return Err("manual save during an included script is not supported".into());
         }
+        // The current manual-save envelope restores only WaitingInput. Saving
+        // any other state would discard pending choice labels, chains or waits
+        // while keeping the already-advanced PC, silently changing the story.
+        if self.state != VmState::WaitingInput {
+            return Err("manual save requires a stable message input boundary".into());
+        }
         let frame = &self.frames[0];
         Ok(ManualVmState {
             script: frame.name.clone(),
@@ -1586,6 +1592,8 @@ mod tests {
             }
         );
         assert!(vm.tick(0, no_scripts).unwrap().is_empty());
+        // A rejected snapshot must not consume the choice or its target labels.
+        assert!(vm.manual_state().is_err());
         vm.complete_select(1).unwrap();
         for _ in 0..8 {
             vm.tick(0, no_scripts).unwrap();
@@ -1758,6 +1766,32 @@ mod tests {
                 volume: 80,
             })
         );
+    }
+
+    #[test]
+    fn manual_snapshot_rejects_states_the_save_format_cannot_restore() {
+        let mut vm = Vm::new("save.sc", program(".end"));
+        let unsupported = [
+            VmState::Ready,
+            VmState::PendingChain { path: "next.sc".into() },
+            VmState::WaitingSelect { labels: vec!["left".into(), "right".into()] },
+            VmState::WaitingTimer { remaining_ms: 123 },
+            VmState::WaitingMovie,
+            VmState::WaitingTransition,
+            VmState::WaitingPanel,
+            VmState::WaitingScroll,
+            VmState::WaitingCharMove,
+            VmState::Finished,
+        ];
+        for state in unsupported {
+            vm.state = state.clone();
+            let before = vm.frames[0].pc;
+            assert!(vm.manual_state().unwrap_err().contains("stable message input boundary"));
+            assert_eq!(vm.state(), &state);
+            assert_eq!(vm.frames[0].pc, before);
+        }
+        vm.state = VmState::WaitingInput;
+        assert!(vm.manual_state().is_ok());
     }
 
     #[test]
