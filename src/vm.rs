@@ -189,6 +189,9 @@ pub struct StageRequest {
 pub struct LayerRequest {
     /// One resource name per screen depth. An empty list clears the layer.
     pub images: Vec<String>,
+    /// Verified overlay command slots, before wildcard/prefix normalization.
+    /// Rendering still uses images until native per-slot consumers are recovered.
+    pub overlay_slots: Option<[String; 3]>,
 }
 
 /// Original ef scene state, in command operand order (!bgH/S/V, !stH/S/V).
@@ -896,7 +899,7 @@ impl Vm {
                 events.push(VmEvent::SetScreen(parse_layer(&arguments)?));
             }
             CommandKind::Overlay => {
-                events.push(VmEvent::SetOverlay(parse_layer(&arguments)?));
+                events.push(VmEvent::SetOverlay(parse_overlay(&arguments)?));
             }
             CommandKind::Frame => {
                 let mut images = Vec::new();
@@ -1259,7 +1262,21 @@ fn parse_layer(arguments: &[String]) -> Result<LayerRequest, String> {
         .map(|argument| strip_resource_prefix(argument))
         .filter(|name| name != "*" && !name.is_empty())
         .collect();
-    Ok(LayerRequest { images })
+    Ok(LayerRequest { images, overlay_slots: None })
+}
+
+fn parse_overlay(arguments: &[String]) -> Result<LayerRequest, String> {
+    if arguments.len() < 2 {
+        return Err("overlay requires at least two operands".into());
+    }
+    let mut request = parse_layer(arguments)?;
+    let offset = usize::from(arguments.len() > 2);
+    request.overlay_slots = Some([
+        if offset == 1 { arguments[0].clone() } else { String::new() },
+        arguments[offset].clone(),
+        arguments[offset + 1].clone(),
+    ]);
+    Ok(request)
 }
 
 fn parse_stage(arguments: &[String]) -> Result<StageRequest, String> {
@@ -1608,6 +1625,16 @@ mod tests {
             vm.tick(0, no_scripts).unwrap();
         }
         assert_eq!(vm.local("RESULT"), Some(2));
+    }
+
+    #[test]
+    fn overlay_preserves_native_slots_before_resource_normalization() {
+        let two = parse_overlay(&["*".into(), "or_kei00a.png".into()]).unwrap();
+        assert_eq!(two.overlay_slots.unwrap(), ["", "*", "or_kei00a.png"]);
+        let three = parse_overlay(&["first.png".into(), "*".into(), "third.png".into()]).unwrap();
+        assert_eq!(three.overlay_slots.unwrap(), ["first.png", "*", "third.png"]);
+        assert!(parse_overlay(&["one.png".into()]).is_err());
+        assert!(parse_layer(&["one.png".into()]).unwrap().overlay_slots.is_none());
     }
 
     #[test]
