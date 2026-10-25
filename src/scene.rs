@@ -3271,6 +3271,16 @@ mod tests {
         scene.refresh_character_frame();
         assert_eq!(&scene.frame.rgba[..4], &[17, 29, 43, 255]);
         assert_eq!(&scene.frame.rgba[4..8], &[255; 4]);
+        let displayed = scene.frame.rgba.clone();
+        scene.transition = Some(TransitionState {
+            transition_type: 0, old_rgba: displayed.clone(), new_rgba: vec![0; scene.canvas.bytes()],
+            mask: None, tile_values: None, duration: 100, elapsed_ms: 0, progress: 0,
+        });
+        scene.refresh_character_frame();
+        let target = &scene.transition.as_ref().unwrap().new_rgba;
+        assert_eq!(&target[..4], &[17, 29, 43, 255]);
+        assert_eq!(&target[4..8], &[255; 4]);
+        assert!(scene.frame.rgba == displayed, "character update replaced displayed transition frame");
     }
 
     #[test]
