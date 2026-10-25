@@ -1110,8 +1110,15 @@ impl SceneSystem {
             self.scroll = None;
         }
         if changed {
-            self.background_rgba =
-                crop_background(self.canvas, &self.background_source, self.camera_x, self.camera_y)?.rgba;
+            let mut target = crop_background(self.canvas, &self.background_source, self.camera_x, self.camera_y)?;
+            // Stage base-spec overlays are viewport-space, not part of the
+            // scrolling image. Reapply them after every camera crop.
+            if let Some(layers) = self.effect_layers.as_ref() {
+                for (image, x, y) in &layers.foreground {
+                    composite_source_over(&mut target, image, *x, *y);
+                }
+            }
+            self.background_rgba = target.rgba;
             self.render_panel_frame();
         }
         Ok(complete)
@@ -3216,6 +3223,18 @@ mod tests {
         let stop = EffectRequest { kind: "end".into(), ..request };
         scene.start_effect(&vfs, &stop).unwrap();
         assert!(scene.frame.rgba.chunks_exact(4).all(|pixel| pixel[..3] == [0, 0, 0]));
+    }
+
+    #[test]
+    fn camera_scroll_retains_screen_space_stage_foreground() {
+        let mut scene = SceneSystem::script_only(&crate::profile::EF_PROFILE);
+        let overlay = Frame { width: 1, height: 1, rgba: vec![17, 29, 43, 255], serial: 0 };
+        scene.effect_layers = Some(StageEffectLayers { base: scene.background_source.clone(), scrolling: Vec::new(), foreground: vec![(overlay.clone(), 0, 0)] });
+        composite_source_over(&mut scene.frame, &overlay, 0, 0);
+        scene.start_scroll(&crate::vm::ScrollRequest { target_x: None, target_y: Some(10), speed: 100 });
+        scene.tick_scroll(16).unwrap();
+        assert!(scene.camera_y > 0);
+        assert_eq!(&scene.frame.rgba[..4], &[17, 29, 43, 255]);
     }
 
     #[test]
