@@ -375,6 +375,40 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires MINORI_EF_ROOT pointing to a local ef installation"]
+    fn live_choice_accepts_retry_after_invalid_host_responses() {
+        let root = std::env::var_os("MINORI_EF_ROOT").expect("set MINORI_EF_ROOT");
+        let writable = tempfile::tempdir().unwrap();
+        let mut runtime = Headless::open_with_options(
+            Path::new(&root), writable.path(),
+            &[("minori.language", "e"), ("minori.start", "102_01.sc")],
+        ).unwrap();
+        let mut reached = false;
+        for step in 0..20000 {
+            runtime.tick(120).unwrap();
+            if step % 5 == 0 { runtime.press().unwrap(); }
+            let requests = runtime.take_requests();
+            if requests.iter().any(|(name, _)| name == "minori_select") { reached = true; break; }
+        }
+        assert!(reached, "choice not reached: {}", runtime.debug_info());
+        assert!(runtime.submit_response("minori_select", "index=oops").is_err());
+        assert!(runtime.submit_response("minori_select", "index=999").is_err());
+        assert!(runtime.debug_info().contains("state=WaitingSelect"));
+        runtime.tick(120).unwrap();
+        runtime.submit_response("minori_select", "index=0").unwrap();
+        assert!(runtime.submit_response("minori_select", "index=0").is_err());
+        for step in 0..500 {
+            runtime.tick(120).unwrap();
+            if step % 5 == 0 { runtime.press().unwrap(); }
+            if runtime.take_requests().iter().any(|(name, value)| name == "minori_message" && !value.is_empty()) {
+                assert!(!runtime.debug_info().contains("state=WaitingSelect"));
+                return;
+            }
+        }
+        panic!("no post-choice dialogue: {}", runtime.debug_info());
+    }
+
+    #[test]
     fn startup_options_are_validated_before_game_open() {
         let result = Headless::open_with_options(
             Path::new("missing-game-root"),
