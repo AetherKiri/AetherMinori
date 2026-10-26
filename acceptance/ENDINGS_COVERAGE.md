@@ -52,3 +52,21 @@ Personally read additions: end-badend1 frame-6000 (Kyousuke low-angle dialogue) 
 frame-11700 (BADEND1 church narrative); end-badend3 frame-1500 (Chihiro church, flowers,
 "教堂后的陵园") and frame-5100 (115_03 closing narration over split white/dark staging).
 All four bad/true endings render with full scenes, correct text, and intentional staging.
+
+## Independent audit (second subagent, completed)
+
+71 images read: end-badend4 26/26 (100%), end-finale 45/79 incl. branch screens and all
+5 movie snapshots. **Both runs: PASS, zero failures.**
+
+- end-badend4: 216_03 carries rich non-black scenes (rooftop with Kei, gym stage,
+  phone-call close-ups, camcorder shot) before the staged near-black monologue
+  「我都仍想一直看着她。」; terminal frame-7062 is the Finished end-fade (same sha as
+  the boot black). Choice screen branch-01: option 2 保持沉默 highlighted.
+- end-finale: full rendering across 216_01/02/04/06, 217_01, 218_01, 701_01 including
+  intentional white-panel (frame-12600, text present) and night/fireworks scenes; the
+  single all-white frame-33000 is the chapter-cut flash into 218_01 (trace
+  WaitingTransition, next sample shows 218_01 content with text).
+- Movies: movie-043229 shows the ED title card ("a sto" / 故事); the four black
+  snapshots match the established multi-round baseline for fade-in-from-black movies.
+  Source AVIs (minori-229684-1-movie-1000*.avi) were consumed offline and no longer
+  exist on disk, so per-frame source verification is no longer possible.
