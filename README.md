@@ -74,6 +74,10 @@ background destination and snapshot-refresh lifetime remain distinct native case
 Manual saves currently write runtime-specific `MINORISV` version 9 with raw filter state,
 original stage inputs and camera state. Older runtime save envelopes have explicit migrations;
 this does **not** establish compatibility with retail saves or full active-effect restoration.
+Snow-family particles now drive the recovered native fade state machine (authored fadeout,
+10ms accepted updates, destruct when done); see
+[snow fadeout integration](<acceptance/SNOW_FADE_INTEGRATION.md>). The final native layer
+blend equation is still unresolved, so composition remains the documented approximation.
 
 To include tests requiring your own local game installation:
 
