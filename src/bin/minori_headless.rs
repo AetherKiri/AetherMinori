@@ -10,6 +10,7 @@
 //!   minori-headless GAME_ROOT OUTPUT_DIR [--frames N] [--delta MS] [--clicks N]
 //!                   [--click-at TICK:X:Y] [--language e|j] [--start SCRIPT]
 //!                   [--every N] [--choose 0,1,...] [--verify-audio]
+//!                   [--pipe-video]
 
 use std::env;
 use std::io::Write;
@@ -32,6 +33,9 @@ fn main() -> Result<(), String> {
     let mut language = "j".to_string();
     let mut start: Option<String> = None;
     let mut verify_audio = false;
+    // Stream every composed frame as concatenated PNG on stdout for ffmpeg
+    // image2pipe; all diagnostics move to stderr so the stream stays clean.
+    let mut pipe_video = false;
     // Zero-based answers by branch ordinal; unspecified branches use option zero.
     let mut choices: Vec<usize> = Vec::new();
     let mut click_at = Vec::<(usize, f64, f64)>::new();
@@ -65,6 +69,7 @@ fn main() -> Result<(), String> {
             "--language" => language = value()?,
             "--start" => start = Some(value()?),
             "--verify-audio" => verify_audio = true,
+            "--pipe-video" => pipe_video = true,
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -84,7 +89,10 @@ fn main() -> Result<(), String> {
     let text = Some(TextRenderer::system().map_err(|error| {
         format!("dialogue screenshot acceptance requires a CJK font: {error}")
     })?);
-    println!("text_renderer=true");
+    let log = |line: String| {
+        if pipe_video { eprintln!("{line}"); } else { println!("{line}"); }
+    };
+    log("text_renderer=true".to_string());
     let mut message: Option<(String, String)> = None;
     let mut reveal = RevealClock::default();
     let mut requests: Vec<(String, String)> = Vec::new();
@@ -227,24 +235,42 @@ fn main() -> Result<(), String> {
             saved += 1;
             last_serial = index as u64;
         }
+        // Video mode: every update becomes one PNG on stdout, so ffmpeg can
+        // segment-encode the whole run without intermediate files.
+        if pipe_video
+            && let Some((width, height, mut rgba)) = runtime.frame()
+        {
+            if let (Some(renderer), Some((speaker, body))) = (text.as_ref(), message.as_ref()) {
+                let visible = reveal.visible_text(body);
+                draw_message(renderer, &mut rgba, width, height, speaker, &visible, panel_rect);
+            }
+            let mut bytes = Vec::new();
+            let mut encoder = png::Encoder::new(&mut bytes, width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().map_err(|e| format!("png header: {e}"))?;
+            writer.write_image_data(&rgba).map_err(|e| format!("png data: {e}"))?;
+            drop(writer);
+            std::io::stdout().lock().write_all(&bytes).map_err(|e| format!("stdout: {e}"))?;
+        }
         if finished {
-            println!("finished_at={index}");
+            log(format!("finished_at={index}"));
             break;
         }
     }
-    println!("frames_written={saved} last_index={last_serial}");
+    log(format!("frames_written={saved} last_index={last_serial}"));
     trace.flush().map_err(|e| format!("flush trace: {e}"))?;
-    println!("debug={}", runtime.debug_info());
+    log(format!("debug={}", runtime.debug_info()));
     let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for (name, _) in &requests {
         *counts.entry(name.as_str()).or_default() += 1;
     }
-    println!("requests={:?}", counts);
+    log(format!("requests={counts:?}"));
     for (_name, value) in requests.iter().filter(|(n, _)| n == "presentation_sprite").take(4) {
-        println!("sprite -> {value}");
+        log(format!("sprite -> {value}"));
     }
     for (name, value) in requests.iter().filter(|(n, _)| n == "minori_message").take(3) {
-        println!("{name} -> {value}");
+        log(format!("{name} -> {value}"));
     }
     Ok(())
 }
