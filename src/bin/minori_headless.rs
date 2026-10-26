@@ -8,7 +8,8 @@
 //!
 //! Usage:
 //!   minori-headless GAME_ROOT OUTPUT_DIR [--frames N] [--delta MS] [--clicks N]
-//!                   [--language e|j] [--start SCRIPT] [--every N] [--choose 0,1,...] [--verify-audio]
+//!                   [--click-at TICK:X:Y] [--language e|j] [--start SCRIPT]
+//!                   [--every N] [--choose 0,1,...] [--verify-audio]
 
 use std::env;
 use std::io::Write;
@@ -33,6 +34,7 @@ fn main() -> Result<(), String> {
     let mut verify_audio = false;
     // Zero-based answers by branch ordinal; unspecified branches use option zero.
     let mut choices: Vec<usize> = Vec::new();
+    let mut click_at = Vec::<(usize, f64, f64)>::new();
     while let Some(argument) = args.next() {
         let text = argument.to_string_lossy().into_owned();
         let mut value = || -> Result<String, String> {
@@ -51,6 +53,15 @@ fn main() -> Result<(), String> {
             }
             "--delta" => delta = value()?.parse().map_err(|e| format!("{e}"))?,
             "--clicks" => clicks = value()?.parse().map_err(|e| format!("{e}"))?,
+            "--click-at" => {
+                let specification = value()?;
+                let mut fields = specification.split(':');
+                let tick = fields.next().ok_or("--click-at requires TICK:X:Y")?.parse().map_err(|e| format!("{e}"))?;
+                let x = fields.next().ok_or("--click-at requires TICK:X:Y")?.parse().map_err(|e| format!("{e}"))?;
+                let y = fields.next().ok_or("--click-at requires TICK:X:Y")?.parse().map_err(|e| format!("{e}"))?;
+                if fields.next().is_some() { return Err("--click-at requires TICK:X:Y".into()); }
+                click_at.push((tick,x,y));
+            },
             "--language" => language = value()?,
             "--start" => start = Some(value()?),
             "--verify-audio" => verify_audio = true,
@@ -93,6 +104,9 @@ fn main() -> Result<(), String> {
         }
         if clicks > 0 && index % (frames / clicks.max(1)).max(1) == 0 {
             runtime.press()?;
+        }
+        for &(tick, x, y) in &click_at {
+            if tick == index { runtime.click_at(x,y)?; }
         }
         for (name, value) in runtime.take_requests() {
             requests.push((name.clone(), value.clone()));

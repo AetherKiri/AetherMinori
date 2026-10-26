@@ -223,6 +223,11 @@ impl Headless {
         self.send(INPUT_POINTER_UP, x, y)
     }
 
+    /// Deliver an explicit pointer gesture in game-space coordinates.
+    pub fn click_at(&mut self, x: f64, y: f64) -> Result<(), String> {
+        self.click(x, y)
+    }
+
     /// One key press, which is how the corpus advances a message or a wait.
     pub fn press(&mut self) -> Result<(), String> {
         self.send(INPUT_KEY_DOWN, 0.0, 0.0)
