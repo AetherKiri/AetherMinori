@@ -61,3 +61,25 @@ Ghidra attempts), so per the goal's fallback the select/.if handler verification
 via bounded objdump windows: `.select` name @0x578578 referenced at 0x4cb254, `.if`
 @0x5786ac referenced at 0x4cc5c8; handler semantic verdicts recorded in
 `ef-re/select-if-native.txt` (subagent task).
+
+## Native select/.if verdicts (objdump path, ef-re/select-if-native.txt)
+
+Subagent static analysis (13 windows, SHA-256 verified) confirms the reimplementation needs
+**zero corrections**:
+
+1. **`.select` label mapping = 0-based.** Native binds option k to click event `SELECT<k>`
+   (fmt "SELECT%d" @0x577CA0), parses `SELECT%d` (@0x4DE7E3), bounds-checks
+   N>=0/N<4/N<count (0x4E2F32/3A/6B), and jumps via `labels[N]` at
+   `labels_begin + N*28` (0x4E2F72-7D) - no +-1. Our `complete_select(index)` is 0-based
+   over declaration-ordered labels: identical.
+2. **`.if` = signed 32-bit.** Both operands coerce via sscanf "%d" (@0x5600D4) to int32;
+   every relational branch is `cmp ebx,esi` + signed conditional (">" jle-fail @0x4ED5A8,
+   "<" jge-fail @0x4ED5BC, ">=" jl-fail @0x4ED5D0, "<=" jg-fail @0x4ED5E4); no unsigned
+   forms. Our `execute_if` resolves to `i32` and uses Rust signed PartialOrd:
+   identical. (Native silently no-ops on wrong arg count; ours errors - corpus always
+   passes exactly 4.)
+3. **Select UI order = declaration order**, displayed option k = ordinal k (reverse paint
+   pass is cosmetic). Max 4 options natively (clamp @0x4E7AC0); corpus uses at most 2.
+
+Route behavior therefore rests on verified-native primitives; the BADEND2 detour was a
+choice-sequence issue, not a semantics divergence.
