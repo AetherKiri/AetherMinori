@@ -75,9 +75,11 @@ Manual saves currently write runtime-specific `MINORISV` version 9 with raw filt
 original stage inputs and camera state. Older runtime save envelopes have explicit migrations;
 this does **not** establish compatibility with retail saves or full active-effect restoration.
 Snow-family particles now drive the recovered native fade state machine (authored fadeout,
-10ms accepted updates, destruct when done); see
-[snow fadeout integration](<acceptance/SNOW_FADE_INTEGRATION.md>). The final native layer
-blend equation is still unresolved, so composition remains the documented approximation.
+10ms accepted updates, destruct when done) and composite through the decoded native
+final-layer route (0x521b80 alpha-keyed masked copy over the zero-filled intermediate);
+see [snow fadeout integration](<acceptance/SNOW_FADE_INTEGRATION.md>) and
+[masked route acceptance](<acceptance/SNOW_ROUTE_MASKED.md>). The four table blend modes
+and the remaining route unknowns (U1-U5) are documented in the linked evidence.
 
 To include tests requiring your own local game installation:
 

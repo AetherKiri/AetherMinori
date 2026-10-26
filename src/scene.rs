@@ -2121,40 +2121,28 @@ fn ef_snow_surface(canvas: Canvas, sprite: &Frame, positions: &[(i32,i32)], alph
     output
 }
 
+/// Native final composition for the particle layer: the zero-filled
+/// intermediate (0x5238f0) rebuilt per accepted update is composited with the
+/// 0x521b80 alpha-keyed whole-pixel copy - pixels with source alpha 0 skip,
+/// drawn pixels overwrite the destination dword including its alpha byte.
+/// Route evidence: 0x522d20 is a raw memmove that would also copy the
+/// intermediate's zero pixels and black out the scene, and the script stages
+/// visible scenery under active SnowH (000_01mugai.sc lines 1022-1050), which
+/// rules that out; the 0x523380 fade lerp needs image byte +0x18 == 0 and no
+/// writer ever stores that. The final-present alpha resolution stays an
+/// explicit unknown (U4); the frame keeps the scaled alpha exactly as the
+/// native route writes it.
 fn composite_particles(canvas: Canvas, output: &mut [u8], state: &ParticleState) {
     let sprite = &state.sprite;
-    // Effect alpha from native 0x50bbc0: values 255+ draw unscaled, the
-    // fade-in ramp and authored fadeout scale every sprite pixel. The final
-    // native layer blend stays unresolved; source-over remains the documented
-    // production approximation.
-    let effect_alpha = state.fade.alpha.clamp(0, 255) as u32;
-    for particle in &state.flakes {
-        let left = particle.x.round() as i32;
-        let top = particle.y.round() as i32;
-        for row in 0..sprite.height as i32 {
-            let y = top + row;
-            if !(0..canvas.height as i32).contains(&y) {
-                continue;
-            }
-            for column in 0..sprite.width as i32 {
-                let x = left + column;
-                if !(0..canvas.width as i32).contains(&x) {
-                    continue;
-                }
-                let source = ((row as u32 * sprite.width + column as u32) * 4) as usize;
-                let alpha = u32::from(sprite.rgba[source + 3]) * effect_alpha / 255;
-                if alpha == 0 {
-                    continue;
-                }
-                let target = ((y as u32 * canvas.width + x as u32) * 4) as usize;
-                let inverse = 255 - alpha;
-                for channel in 0..3 {
-                    output[target + channel] = ((u32::from(sprite.rgba[source + channel]) * alpha
-                        + u32::from(output[target + channel]) * inverse)
-                        / 255) as u8;
-                }
-                output[target + 3] = 255;
-            }
+    let positions: Vec<(i32,i32)> = state
+        .flakes
+        .iter()
+        .map(|particle| (particle.x.round() as i32, particle.y.round() as i32))
+        .collect();
+    let intermediate = ef_snow_surface(canvas, sprite, &positions, state.fade.alpha.clamp(0, 255));
+    for (target, pixel) in output.chunks_exact_mut(4).zip(intermediate.chunks_exact(4)) {
+        if pixel[3] != 0 {
+            target.copy_from_slice(pixel);
         }
     }
 }
@@ -4697,7 +4685,8 @@ mod tests {
         state.fade.alpha = 128;
         let mut output = vec![10u8;canvas.bytes()];
         composite_particles(canvas,&mut output,&state);
-        assert_eq!(output[0],132,"128/255 scales the sprite alpha over the base");
+        assert_eq!(output[0],255,"route B pastes the sprite RGB unchanged");
+        assert_eq!(output[3],128,"route B overwrites the destination alpha with the scaled source alpha");
         state.fade.alpha = 256;
         let mut output = vec![10u8;canvas.bytes()];
         composite_particles(canvas,&mut output,&state);
