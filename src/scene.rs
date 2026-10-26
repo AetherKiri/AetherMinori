@@ -2004,6 +2004,101 @@ fn ef_snow_max_pixel(destination: [u8;4], mut source: [u8;4], alpha: i32) -> [u8
     if packed(source) > packed(destination) { source } else { destination }
 }
 
+/// Native 0x521b80 route: alpha-keyed whole-pixel copy. Pixels whose source
+/// alpha is zero are skipped; every drawn pixel overwrites the destination
+/// dword including its alpha byte (the old "dest high byte preserved" reading
+/// was wrong - see ef-re/snow-blend-equation.txt C1).
+#[allow(dead_code)]
+fn ef_alpha_keyed_copy_pixel(destination: [u8;4], source: [u8;4]) -> [u8;4] {
+    if source[3] == 0 { return destination; }
+    source
+}
+
+/// Native 0x51e4f0 SCREEN mode. t scales the source alpha by the record's
+/// global P (0x5dca00 table = trunc(k*P/255); P>=255 fills the table with
+/// zeros so the mode draws nothing). Contribution is premultiplied then
+/// screened; destination alpha is preserved. All divisions truncate.
+#[allow(dead_code)]
+fn ef_screen_blend_pixel(destination: [u8;4], source: [u8;4], mode_alpha: u32) -> [u8;4] {
+    if mode_alpha >= 255 { return destination; }
+    let t = source[3] as u32 * mode_alpha / 255;
+    if t == 0 { return destination; }
+    let mut output = destination;
+    for channel in 0..3 {
+        let m = source[channel] as u32 * t / 255;
+        let d = destination[channel] as u32;
+        output[channel] = (255 - (255 - m) * (255 - d) / 255) as u8;
+    }
+    output
+}
+
+/// Native 0x51e220 HARDLIGHT mode: piecewise D-shaped table, split on the
+/// premultiplied source value; destination alpha preserved. Truncating /256.
+#[allow(dead_code)]
+fn ef_hardlight_blend_pixel(destination: [u8;4], source: [u8;4], mode_alpha: u32) -> [u8;4] {
+    if mode_alpha >= 255 { return destination; }
+    let t = source[3] as u32 * mode_alpha / 255;
+    if t == 0 { return destination; }
+    let mut output = destination;
+    for channel in 0..3 {
+        let m = source[channel] as u32 * t / 255;
+        let d = destination[channel] as u32;
+        output[channel] = if m <= 127 {
+            (2 * d * m / 256) as u8
+        } else {
+            (255 - (255 - d) * (511 - 2 * m) / 256) as u8
+        };
+    }
+    output
+}
+
+/// Native 0x51dba0 ADDITIVE mode: inline alpha scale, channels and the
+/// destination alpha both saturate; nothing is preserved byte-for-byte.
+#[allow(dead_code)]
+fn ef_additive_blend_pixel(destination: [u8;4], source: [u8;4], mode_alpha: u32) -> [u8;4] {
+    let t = source[3] as u32 * mode_alpha.min(255) / 255;
+    if t == 0 { return destination; }
+    let mut output = destination;
+    for channel in 0..3 {
+        let m = source[channel] as u32 * t / 255;
+        output[channel] = output[channel].saturating_add(m as u8);
+    }
+    output[3] = output[3].saturating_add(t.min(255) as u8);
+    output
+}
+
+/// Native 0x51ded0 MULTIPLY-FADE mode: destination lerped toward
+/// multiply(src,dst) by t/255 using the exact /65025 and /255 truncations;
+/// destination alpha preserved.
+#[allow(dead_code)]
+fn ef_multiply_fade_blend_pixel(destination: [u8;4], source: [u8;4], mode_alpha: u32) -> [u8;4] {
+    let t = source[3] as u32 * mode_alpha.min(255) / 255;
+    if t == 0 { return destination; }
+    let mut output = destination;
+    for channel in 0..3 {
+        let s = source[channel] as u32;
+        let d = destination[channel] as u32;
+        output[channel] = (s * d * t / 65025 + d * (255 - t) / 255) as u8;
+    }
+    output
+}
+
+/// Native 0x523380 GLOBAL-FADE lerp: weight w = alphaLUT[srcA] (LUT builder
+/// unresolved, so the caller supplies it), applied over all four channels
+/// with an arithmetic >>8, i.e. out = dst + (src-dst)*w/256. The record alpha
+/// of >=255 collapses to a plain copy and <1 is a no-op; destination alpha is
+/// lerped toward the source alpha, not preserved.
+#[allow(dead_code)]
+fn ef_fade_lerp_pixel(destination: [u8;4], source: [u8;4], weight: i32) -> [u8;4] {
+    let mut output = destination;
+    for channel in 0..4 {
+        let d = destination[channel] as i32;
+        let s = source[channel] as i32;
+        output[channel] = ((d + ((s - d) * weight >> 8)) & 0xFF) as u8;
+    }
+    output
+}
+
 /// Transparent intermediate; every call starts cleared, as native 0x5238f0.
 /// Final effect-layer composition is deliberately outside this recovered step.
 #[allow(dead_code)]
@@ -4528,6 +4623,32 @@ mod tests {
         let mut invisible = SnowFadeState::default();
         invisible.fadeout(); invisible.accepted_update(1);
         assert!(invisible.done);
+    }
+
+    #[test]
+    fn native_blend_modes_match_decoded_closed_forms() {
+        let dst = [10u8,20,30,255];
+        // Screen: premultiplied source screened over dst; P>=255 draws nothing.
+        assert_eq!(ef_screen_blend_pixel(dst,[255,255,255,255],255),dst);
+        assert_eq!(ef_screen_blend_pixel(dst,[0,0,0,255],200),dst,"t=0 skips");
+        assert_eq!(ef_screen_blend_pixel(dst,[255,255,255,255],200),[203u8,205,207,255]);
+        assert_eq!(ef_screen_blend_pixel([255u8,255,255,255],[255,255,255,255],200),[255u8,255,255,255],"white dst receives nothing");
+        assert_eq!(ef_screen_blend_pixel([10u8,20,30,40],[255,255,255,255],200),[203u8,205,207,40],"dest alpha preserved");
+        // Hardlight: P=160 makes t=160, m=160 hits the high branch over dst 200.
+        assert_eq!(ef_hardlight_blend_pixel([200u8,200,200,255],[255,255,255,255],160),[214u8,214,214,255]);
+        // P=254, srcA=255: t=254; ch0 m=126 low branch, ch1/2 m=254 high branch.
+        assert_eq!(ef_hardlight_blend_pixel([200u8,200,200,255],[127u8,255,255,255],254),[196u8,255,255,255]);
+        // Additive saturates channels and adds into alpha.
+        assert_eq!(ef_additive_blend_pixel([100u8,100,100,200],[200,200,200,255],200),[255u8,255,255,255]);
+        assert_eq!(ef_additive_blend_pixel([10u8,20,30,40],[20u8,20,20,255],100),[17u8,27,37,140]);
+        // Multiply-fade: dst lerped toward multiply(src,dst) by t/255.
+        assert_eq!(ef_multiply_fade_blend_pixel([100u8,100,100,255],[255,255,255,128],255),[99u8,99,99,255]);
+        // Alpha-keyed copy skips only transparent source pixels.
+        assert_eq!(ef_alpha_keyed_copy_pixel([1u8,2,3,255],[9,8,7,0]),[1u8,2,3,255]);
+        assert_eq!(ef_alpha_keyed_copy_pixel([1u8,2,3,255],[9,8,7,128]),[9u8,8,7,128]);
+        // Fade lerp: arithmetic >>8 over all four channels including alpha.
+        assert_eq!(ef_fade_lerp_pixel([100u8,100,100,200],[200,200,200,255],128),[150u8,150,150,227]);
+        assert_eq!(ef_fade_lerp_pixel([250u8,250,250,250],[10,10,10,10],128),[130u8,130,130,130]);
     }
 
     #[test]
