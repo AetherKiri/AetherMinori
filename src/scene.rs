@@ -288,15 +288,12 @@ struct SaveMenuState {
 /// Snow 0x50b920/0x50bbc0 alpha state; caller supplies accepted native-clock
 /// delta. Mapping host milliseconds and update cadence remains separate.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 struct SnowFadeState { fading: bool, elapsed: u32, alpha: i32, done: bool }
 
 /// Native multimedia callback 0x5353a0 divides milliseconds by ten.
 /// This only adapts the clock; it does not invent the accepted-update threshold.
 #[derive(Debug, Default)]
-#[allow(dead_code)]
 struct SnowClock { tick: u32, remainder_ms: u32 }
-#[allow(dead_code)]
 impl SnowClock {
     fn advance(&mut self, milliseconds: u32) -> u32 {
         let total = u64::from(self.remainder_ms) + u64::from(milliseconds);
@@ -306,7 +303,6 @@ impl SnowClock {
     }
 }
 
-#[allow(dead_code)]
 impl SnowFadeState {
     fn fadeout(&mut self) {
         if !self.fading { self.fading = true; self.elapsed = 0; }
@@ -327,6 +323,12 @@ struct ParticleState {
     sprite: Frame,
     flakes: Vec<Particle>,
     horizontal_drift: i32,
+    /// Native 0x50bbc0 accepted-update state: fade-in ramp, authored fadeout.
+    fade: SnowFadeState,
+    /// Nominal 10ms logical clock (0x5353a0 divides milliseconds by ten).
+    clock: SnowClock,
+    /// Accepted updates so far; the first native delta is the sentinel 1.
+    updates: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -906,6 +908,12 @@ impl SceneSystem {
             cutin.state = 2;
             cutin.velocity = if cutin.from_left { 2.0 } else { -2.0 };
         }
+        // Native 0x50b920: the first trigger enters the fading state and
+        // resets the elapsed accumulator; repeats stay no-ops. Particles keep
+        // moving until alpha drops below one and the owner destructs.
+        if let Some(particles) = self.particles.as_mut() {
+            particles.fade.fadeout();
+        }
     }
 
     /// The Snow family: a field of falling particles drawn from a sprite in
@@ -921,6 +929,9 @@ impl SceneSystem {
             sprite,
             flakes: seed_particles(self.canvas, count, drift),
             horizontal_drift: drift,
+            fade: SnowFadeState::default(),
+            clock: SnowClock::default(),
+            updates: 0,
         });
         self.render_panel_frame();
         Ok(())
@@ -937,6 +948,9 @@ impl SceneSystem {
             sprite,
             flakes: seed_particles(self.canvas, 160, 12),
             horizontal_drift: 12,
+            fade: SnowFadeState::default(),
+            clock: SnowClock::default(),
+            updates: 0,
         });
         self.render_panel_frame();
         Ok(())
@@ -953,7 +967,23 @@ impl SceneSystem {
 
     pub fn tick_effect(&mut self, delta_ms: u32) -> Result<(), String> {
         if self.particles.is_some() {
-            advance_particles(self.canvas, self.particles.as_mut().unwrap(), delta_ms);
+            let finished = {
+                let state = self.particles.as_mut().unwrap();
+                let target = state.clock.advance(delta_ms);
+                let accepted = advance_snow_updates(state, target);
+                let done = state.fade.done;
+                if !done && accepted > 0 {
+                    // Particle slots keep moving on every accepted update.
+                    advance_particles(self.canvas, state, accepted * 10);
+                }
+                done
+            };
+            if finished {
+                // Native owner 0x4d7060 destructs and nulls the effect once
+                // the fade reports done through virtual 14.
+                self.particles = None;
+                self.recrop_stage_background()?;
+            }
             self.render_panel_frame();
             return Ok(());
         }
@@ -1897,8 +1927,8 @@ impl SceneSystem {
 }
 
 /// Deterministic initial particle field. The original seeds from its own RNG,
-/// but a fixed pseudo-random spread keeps acceptance frames reproducible while
-/// looking identical to the eye.
+/// but a fixed pseudo-random spread keeps acceptance frames reproducible;
+/// the particle layout itself is not native-matched.
 fn seed_particles(canvas: Canvas, count: usize, drift: i32) -> Vec<Particle> {
     let mut state = 0x1234_5678u32;
     let mut next = || {
@@ -1926,6 +1956,21 @@ fn seed_particles(canvas: Canvas, count: usize, drift: i32) -> Vec<Particle> {
             }
         })
         .collect()
+}
+
+/// Native 0x50bbc0 accepted-update cadence: the first delta is the sentinel 1
+/// and the steady multimedia timer period is 10ms (timer state 0x5dde8c first
+/// DWORD). Returns the number of accepted updates; the unknown dynamic
+/// minimum threshold is not modeled, so every nominal tick is accepted.
+fn advance_snow_updates(state: &mut ParticleState, target_ticks: u32) -> u32 {
+    let mut accepted = 0u32;
+    while state.updates < target_ticks && !state.fade.done {
+        let delta = if state.updates == 0 { 1 } else { 10 };
+        state.fade.accepted_update(delta);
+        state.updates += 1;
+        accepted += 1;
+    }
+    accepted
 }
 
 fn advance_particles(canvas: Canvas, state: &mut ParticleState, delta_ms: u32) {
@@ -1983,6 +2028,11 @@ fn ef_snow_surface(canvas: Canvas, sprite: &Frame, positions: &[(i32,i32)], alph
 
 fn composite_particles(canvas: Canvas, output: &mut [u8], state: &ParticleState) {
     let sprite = &state.sprite;
+    // Effect alpha from native 0x50bbc0: values 255+ draw unscaled, the
+    // fade-in ramp and authored fadeout scale every sprite pixel. The final
+    // native layer blend stays unresolved; source-over remains the documented
+    // production approximation.
+    let effect_alpha = state.fade.alpha.clamp(0, 255) as u32;
     for particle in &state.flakes {
         let left = particle.x.round() as i32;
         let top = particle.y.round() as i32;
@@ -1997,7 +2047,7 @@ fn composite_particles(canvas: Canvas, output: &mut [u8], state: &ParticleState)
                     continue;
                 }
                 let source = ((row as u32 * sprite.width + column as u32) * 4) as usize;
-                let alpha = u32::from(sprite.rgba[source + 3]);
+                let alpha = u32::from(sprite.rgba[source + 3]) * effect_alpha / 255;
                 if alpha == 0 {
                     continue;
                 }
@@ -3868,7 +3918,9 @@ mod tests {
         scene.particles = Some(ParticleState {
             sprite: Frame { width: 1, height: 1, rgba: vec![255; 4], serial: 0 },
             flakes: vec![Particle { x: 1.0, y: 0.0, speed: 0.0, sway: 0.0, phase: 0.0 }], horizontal_drift: 0,
+            fade: SnowFadeState::default(), clock: SnowClock::default(), updates: 0,
         });
+        advance_snow_updates(scene.particles.as_mut().unwrap(),40);
         scene.frame_stills.push(Frame { width: 1, height: 1, rgba: vec![17, 29, 43, 255], serial: 0 });
         scene.refresh_composed_frame();
         scene.refresh_character_frame();
@@ -3928,7 +3980,9 @@ mod tests {
             sprite: Frame { width: 1, height: 1, rgba: vec![255; 4], serial: 0 },
             flakes: vec![Particle { x: 0.0, y: 0.0, speed: 0.0, sway: 0.0, phase: 0.0 }],
             horizontal_drift: 0,
+            fade: SnowFadeState::default(), clock: SnowClock::default(), updates: 0,
         });
+        advance_snow_updates(scene.particles.as_mut().unwrap(),40);
         scene.refresh_composed_frame();
         assert_eq!(&scene.frame.rgba[..4], &[255; 4]);
         for _ in 0..3 {
@@ -4029,6 +4083,7 @@ mod tests {
             sprite: Frame { width: 1, height: 1, rgba: vec![255; 4], serial: 0 },
             flakes: vec![Particle { x: 0.0, y: 0.0, speed: 0.0, sway: 0.0, phase: 0.0 }],
             horizontal_drift: 0,
+            fade: SnowFadeState::default(), clock: SnowClock::default(), updates: 0,
         });
         let layer = Frame { width: 1, height: 1, rgba: vec![17, 29, 43, 255], serial: 0 };
         scene.screen_layers.push(layer.clone());
@@ -4473,6 +4528,59 @@ mod tests {
         let mut invisible = SnowFadeState::default();
         invisible.fadeout(); invisible.accepted_update(1);
         assert!(invisible.done);
+    }
+
+    #[test]
+    fn snow_update_cadence_runs_sentinel_then_timer_period_until_done() {
+        let mut state = ParticleState {
+            sprite: Frame {width:1,height:1,rgba:vec![0,0,0,255],serial:0},
+            flakes: Vec::new(),
+            horizontal_drift: 0,
+            fade: SnowFadeState::default(),
+            clock: SnowClock::default(),
+            updates: 0,
+        };
+        assert_eq!(advance_snow_updates(&mut state,3),3);
+        assert_eq!(state.updates,3);
+        assert_eq!(state.fade.alpha,1,"sentinel 1 plus two 10ms ticks gives q=0,0,1");
+        advance_snow_updates(&mut state,40);
+        assert_eq!(state.fade.alpha,256);
+        assert!(!state.fade.fading);
+        state.fade.fadeout();
+        let mut guard = 0;
+        while !state.fade.done {
+            let target = state.updates + 1;
+            advance_snow_updates(&mut state,target);
+            guard += 1;
+            assert!(guard < 200,"fadeout must finish in bounded accepted updates");
+        }
+        assert!(state.fade.alpha < 1);
+        let target = state.updates + 5;
+        assert_eq!(advance_snow_updates(&mut state,target),0,"done effect accepts no further updates");
+    }
+
+    #[test]
+    fn snow_alpha_zero_scales_composited_particles_to_invisible() {
+        let canvas = Canvas::new(2,2);
+        let mut state = ParticleState {
+            sprite: Frame {width:2,height:2,rgba:vec![255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255],serial:0},
+            flakes: vec![Particle {x:0.0,y:0.0,speed:0.0,sway:0.0,phase:0.0}],
+            horizontal_drift: 0,
+            fade: SnowFadeState::default(),
+            clock: SnowClock::default(),
+            updates: 0,
+        };
+        let mut output = vec![10u8;canvas.bytes()];
+        composite_particles(canvas,&mut output,&state);
+        assert!(output.iter().all(|&b| b == 10),"alpha 0 leaves the destination untouched");
+        state.fade.alpha = 128;
+        let mut output = vec![10u8;canvas.bytes()];
+        composite_particles(canvas,&mut output,&state);
+        assert_eq!(output[0],132,"128/255 scales the sprite alpha over the base");
+        state.fade.alpha = 256;
+        let mut output = vec![10u8;canvas.bytes()];
+        composite_particles(canvas,&mut output,&state);
+        assert_eq!(output[0],255);
     }
 
     #[test]
