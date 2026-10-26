@@ -118,8 +118,13 @@ struct Character {
     mouth: Option<MouthAnimation>,
     mouth_state: u8,
     blink_enabled: bool,
-    blink_elapsed_ms: u32,
-    blink_state: bool,
+    blink_table_key: u8,
+    blink_frame_index: usize,
+    blink_remaining_frames: i64,
+    blink_elapsed_frames: u64,
+    blink_frame_carry_ms: u32,
+    blink_id: u8,
+    blink_rand: MinoriRand,
     scaled_size: Option<(u32, u32)>,
     x: i32,
     y: i32,
@@ -679,6 +684,10 @@ impl SceneSystem {
                 || format!("{}.ani", saved.image_name),
                 |(stem, _)| format!("{stem}.ani"),
             );
+            // Native ctor reset (0x52C8B0): open eye now, initial hold
+            // rand()%300 frames, drawn from a per-character LCG stream.
+            let mut blink_rand = MinoriRand::new(saved.id);
+            let blink_remaining = i64::from(blink_rand.next() % 300);
             let mouth = vfs
                 .read_optional(&ani_name)?
                 .as_deref()
@@ -696,8 +705,13 @@ impl SceneSystem {
                     mouth,
                     mouth_state: 0,
                     blink_enabled: true,
-                    blink_elapsed_ms: 0,
-                    blink_state: false,
+                    blink_table_key: 2,
+                    blink_frame_index: 0,
+                    blink_remaining_frames: blink_remaining,
+                    blink_elapsed_frames: 0,
+                    blink_frame_carry_ms: 0,
+                    blink_id: 0,
+                    blink_rand,
                     scaled_size: saved.scaled_size,
                     x: saved.x,
                     y: saved.y,
@@ -1381,6 +1395,10 @@ impl SceneSystem {
                 if let Some((width, height)) = scaled_size {
                     frame = resize_nearest(&frame, width, height);
                 }
+                // Native ctor reset (0x52C8B0): open eye now, initial hold
+                // rand()%300 frames, drawn from a per-character LCG stream.
+                let mut blink_rand = MinoriRand::new(key);
+                let blink_remaining = i64::from(blink_rand.next() % 300);
                 let character = Character {
                     image_name: image,
                     image: frame,
@@ -1390,8 +1408,13 @@ impl SceneSystem {
                     mouth,
                     mouth_state: 0,
                     blink_enabled: blink,
-                    blink_elapsed_ms: 0,
-                    blink_state: false,
+                    blink_table_key: 2,
+                    blink_frame_index: 0,
+                    blink_remaining_frames: blink_remaining,
+                    blink_elapsed_frames: 0,
+                    blink_frame_carry_ms: 0,
+                    blink_id: 0,
+                    blink_rand,
                     scaled_size,
                     x: prior.as_ref().map_or(0, |character| character.x),
                     y: prior.as_ref().map_or(0, |character| character.y),
@@ -2704,8 +2727,10 @@ fn compose_characters_native(
         } else { character };
         composite_character_surface(canvas, &mut output, character, &character.image);
         if let Some(mouth) = &character.mouth {
-            if let Some(eye) = character
-                .blink_state
+            // Native ids: 0 = open, 1 = mid, 2 = closed. The reimplementation
+            // only carries open/closed eye overlays, so the mid frame draws
+            // the closed overlay too (hard swap, no blend - native 0x52C250).
+            if let Some(eye) = (character.blink_id != 0)
                 .then_some(mouth.closed_eye.as_ref())
                 .flatten()
             {
@@ -3472,6 +3497,40 @@ fn select_mouth_target(characters: &HashMap<u32, Character>, actor: Option<&str>
     candidates.next().is_none().then_some(first)
 }
 
+/// Native EyeAnimater rhythm tables, read from .rdata 0x573E68..0x574098
+/// (ef-re/blink-mouth-native.txt section 6). Entries are {image_id,
+/// duration_frames} with id 0 = open, 1 = mid, 2 = closed and -1 the wrap
+/// terminator; the player advances one frame per engine frame. Key 2 is the
+/// native default; "EYE_SEQ_DEFAULT" in system.dat can override (data, not
+/// resolvable from the exe).
+const EYE_TABLES: [&[(i32, u32)]; 6] = [
+    &[(0, 40), (1, 40), (2, 80), (1, 40), (0, 400), (1, 40), (2, 80), (1, 40), (0, 3600), (1, 40), (2, 80), (1, 40), (0, 1200), (-1, 1)],
+    &[(0, 10), (1, 20), (2, 40), (1, 20), (0, 200), (1, 20), (2, 40), (1, 20), (0, 1800), (1, 20), (2, 40), (1, 20), (0, 600), (-1, 1)],
+    &[(0, 10), (1, 10), (2, 20), (1, 10), (0, 100), (1, 10), (2, 20), (1, 10), (0, 900), (1, 10), (2, 20), (1, 10), (0, 300), (-1, 1)],
+    &[(0, 5), (1, 5), (2, 10), (1, 5), (0, 100), (1, 5), (2, 10), (1, 5), (0, 450), (1, 5), (2, 10), (1, 5), (0, 150), (-1, 1)],
+    &[(0, 3), (1, 3), (2, 7), (1, 3), (0, 33), (1, 3), (2, 7), (1, 3), (0, 225), (1, 3), (2, 7), (1, 3), (0, 75), (-1, 1)],
+    &[(0, 30), (1, 30), (2, 30), (1, 30), (-1, 0)],
+];
+
+/// MSVC rand() exactly as recovered at 0x466A6A: imul 0x343FD, add 0x269EC3,
+/// shift right 16, mask 0x7FFF. The native stream is shared through TLS;
+/// this runtime keeps one deterministic stream per character instead.
+#[derive(Debug, Clone)]
+struct MinoriRand(u32);
+
+impl MinoriRand {
+    fn new(seed: u32) -> Self {
+        let mut rand = MinoriRand(seed);
+        rand.next();
+        rand
+    }
+
+    fn next(&mut self) -> u32 {
+        self.0 = self.0.wrapping_mul(0x343FD).wrapping_add(0x269EC3);
+        (self.0 >> 16) & 0x7FFF
+    }
+}
+
 fn advance_blinks(characters: &mut HashMap<u32, Character>, delta_ms: u32) -> bool {
     let mut changed = false;
     for character in characters.values_mut() {
@@ -3481,17 +3540,42 @@ fn advance_blinks(characters: &mut HashMap<u32, Character>, delta_ms: u32) -> bo
         if !character.blink_enabled || mouth.open_eye.is_none() || mouth.closed_eye.is_none() {
             continue;
         }
-        character.blink_elapsed_ms = character.blink_elapsed_ms.saturating_add(delta_ms);
-        if character.blink_state {
-            if character.blink_elapsed_ms >= 100 {
-                character.blink_elapsed_ms = 0;
-                character.blink_state = false;
+        // The native player decrements a frame counter once per engine frame
+        // (thunk 0x52B780 passes the constant 1); the loop rate is an explicit
+        // unknown, so the recovered frame counts map at the assumed 60fps.
+        character.blink_frame_carry_ms = character.blink_frame_carry_ms.saturating_add(delta_ms);
+        let frames = character.blink_frame_carry_ms as u64 * 60 / 1000;
+        let delta_frames = i64::try_from(frames - character.blink_elapsed_frames).unwrap_or(0);
+        if delta_frames <= 0 {
+            continue;
+        }
+        character.blink_elapsed_frames = frames;
+        character.blink_remaining_frames -= delta_frames;
+        let table = EYE_TABLES[character.blink_table_key as usize];
+        while character.blink_remaining_frames <= 0 {
+            let mut entry = table[character.blink_frame_index];
+            if entry.0 < 0 {
+                // {-1,..} wrap terminator: restart the cycle at the open hold.
+                character.blink_frame_index = 0;
+                entry = table[0];
+            }
+            // Every wrap to the first open hold gains rand()%500+50 frames
+            // when the key is below 5 (the native gate on the key field at
+            // +0xA4, which also explains key 5 being the fixed loop).
+            let jitter = u64::from(
+                if character.blink_frame_index == 0 && character.blink_table_key < 5 {
+                    character.blink_rand.next() % 500 + 50
+                } else {
+                    0
+                },
+            );
+            character.blink_remaining_frames = i64::from(entry.1) + i64::try_from(jitter).unwrap_or(0);
+            let id = entry.0 as u8;
+            if character.blink_id != id {
+                character.blink_id = id;
                 changed = true;
             }
-        } else if character.blink_elapsed_ms >= 2800 {
-            character.blink_elapsed_ms = 0;
-            character.blink_state = true;
-            changed = true;
+            character.blink_frame_index += 1;
         }
     }
     changed
@@ -3783,7 +3867,7 @@ mod tests {
         actor.mouth = Some(MouthAnimation { actor: "synthetic".into(), medium:patch.clone(),
             open:patch.clone(), open_eye:None, closed_eye:Some(patch.clone()) });
         actor.mouth_state = 1;
-        actor.blink_state = true;
+        actor.blink_id = 2;
         let actors = HashMap::from([(1, actor.clone())]);
         let strip = Frame { width:1,height:3,rgba:vec![0,0,0,0, 128,64,255,0, 255,255,255,0],serial:0 };
         let background = [23,45,67,255].repeat(6);
@@ -4220,8 +4304,13 @@ mod tests {
             mouth: None,
             mouth_state: 0,
             blink_enabled: true,
-            blink_elapsed_ms: 0,
-            blink_state: false,
+            blink_table_key: 2,
+            blink_frame_index: 0,
+            blink_remaining_frames: 0,
+            blink_elapsed_frames: 0,
+            blink_frame_carry_ms: 0,
+            blink_id: 0,
+            blink_rand: MinoriRand::new(u32::from(id)),
             scaled_size: None,
             x: 0,
             y: 0,
@@ -4611,6 +4700,94 @@ mod tests {
         let mut invisible = SnowFadeState::default();
         invisible.fadeout(); invisible.accepted_update(1);
         assert!(invisible.done);
+    }
+
+    #[test]
+    fn blink_player_follows_native_rhythm_tables_and_lcg_jitter() {
+        let overlay = MouthOverlay {
+            image: Frame { width: 1, height: 1, rgba: vec![0, 0, 0, 255], serial: 0 },
+            x: 0,
+            y: 0,
+        };
+        let mut character = Character {
+            image_name: "st_test.png".to_string(),
+            image: Frame { width: 1, height: 1, rgba: vec![0, 0, 0, 255], serial: 0 },
+            _secondary_name: None,
+            secondary_image: None,
+            _tertiary_name: None,
+            mouth: Some(MouthAnimation {
+                actor: "test".to_string(),
+                medium: overlay.clone(),
+                open: overlay.clone(),
+                open_eye: Some(overlay.clone()),
+                closed_eye: Some(overlay),
+            }),
+            mouth_state: 0,
+            blink_enabled: true,
+            blink_table_key: 2,
+            blink_frame_index: 0,
+            blink_remaining_frames: 0,
+            blink_elapsed_frames: 0,
+            blink_frame_carry_ms: 0,
+            blink_id: 0,
+            blink_rand: MinoriRand::new(1),
+            scaled_size: None,
+            x: 0,
+            y: 0,
+            order: 0,
+            blend_rate: 256,
+            visible: true,
+            keep: false,
+            current: true,
+            next: false,
+            sequence: None,
+            movement: None,
+        };
+        // The native ctor reset seeds the initial hold with rand()%300 frames
+        // (MinoriRand::new discards one output, exactly like the ctor path).
+        // The same LCG instance continues into the player, so the expectation
+        // stream below mirrors it draw for draw.
+        let mut blink_rand = MinoriRand::new(1);
+        let reset_hold = u64::from(blink_rand.next() % 300);
+        character.blink_rand = blink_rand;
+        character.blink_remaining_frames = i64::from(reset_hold as u32);
+        let mut expected = MinoriRand::new(1);
+        assert_eq!(u64::from(expected.next() % 300), reset_hold);
+        let jitter0 = u64::from(expected.next() % 500 + 50);
+        let mut characters = HashMap::new();
+        characters.insert(1u32, character);
+
+        // Walk the player one 60fps frame at a time and record the quantized
+        // frame index at which the eye image id changes. Expected key-2
+        // schedule after the reset hold: entry0 {0,10} plus the wrap jitter
+        // rand()%500+50, then {1,10}{2,20}{1,10} (mid draws the closed
+        // overlay too), then the plain 100-frame open hold at index 4.
+        let mut changes = Vec::new();
+        let mut last_id = 0u8;
+        let mut elapsed_ms = 0u32;
+        for _ in 0..(reset_hold + jitter0 + 200) {
+            elapsed_ms += 17; // 60fps frame
+            advance_blinks(&mut characters, 17);
+            let id = characters[&1].blink_id;
+            if id != last_id {
+                changes.push(((u64::from(elapsed_ms) * 60 / 1000), id));
+                last_id = id;
+            }
+        }
+
+        // 17ms steps quantize the 60fps clock, so frame boundaries land
+        // within one quantization step of the exact schedule.
+        let close = |got: u64, want: u64| (got as i64 - want as i64).abs() <= 2;
+        let mut t = reset_hold;
+        assert!(close(changes[0].0, t + 10 + jitter0) && changes[0].1 == 1, "mid shows closed overlay: {changes:?}");
+        t += 10 + jitter0;
+        assert!(close(changes[1].0, t + 10) && changes[1].1 == 2, "closed: {changes:?}");
+        t += 10;
+        assert!(close(changes[2].0, t + 20) && changes[2].1 == 1, "opening mid: {changes:?}");
+        t += 20;
+        assert!(close(changes[3].0, t + 10) && changes[3].1 == 0, "open again: {changes:?}");
+        t += 10;
+        assert!(close(changes[4].0, t + 100) && changes[4].1 == 1, "second blink after the plain 100-frame hold: {changes:?}");
     }
 
     #[test]
